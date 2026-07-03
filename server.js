@@ -117,6 +117,35 @@ app.post('/users/verify-driver', async (req, res) => {
   }
 });
 
+// 🚨 THE FIX: NEW UPDATE PROFILE ROUTE! 🚨
+app.put('/users/update-profile', async (req, res) => {
+  try {
+    const { phone, name, email, isEmailVerified, altEmail, emgName1, emgPhone1, emgName2, emgPhone2 } = req.body;
+
+    if (!phone) return res.status(400).json({ error: "Phone number is required to update profile." });
+
+    const user = await User.findOne({ phone });
+    if (!user) return res.status(404).json({ error: "User not found." });
+
+    // Update all the profile fields
+    user.name = name;
+    user.email = email;
+    user.isEmailVerified = isEmailVerified;
+    user.altEmail = altEmail;
+    user.emgName1 = emgName1;
+    user.emgPhone1 = emgPhone1;
+    user.emgName2 = emgName2;
+    user.emgPhone2 = emgPhone2;
+
+    await user.save();
+
+    res.status(200).json({ success: true, user, message: "Profile updated successfully!" });
+  } catch (error) {
+    console.error("Profile update error:", error);
+    res.status(500).json({ error: "Server error during profile update." });
+  }
+});
+
 // ==========================================
 // 5. AUTHENTICATION & OTP
 // ==========================================
