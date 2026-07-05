@@ -1,4 +1,4 @@
-require('dns').setDefaultResultOrder('ipv4first'); // 🚨 Keeps general network traffic stable
+require('dns').setDefaultResultOrder('ipv4first'); 
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -6,7 +6,7 @@ const { Resend } = require('resend');
 const mongoose = require('mongoose');
 const http = require('http'); 
 const { Server } = require('socket.io');
-const crypto = require('crypto'); // 🚨 Built-in Node module for generating secure session tokens
+const crypto = require('crypto'); 
 
 const resend = new Resend(process.env.RESEND_API_KEY); 
 
@@ -26,7 +26,7 @@ mongoose.connect(process.env.MONGO_URI)
   .catch((err) => console.log('Database Connection Error:', err));
 
 // ==========================================
-// 🛡️ THE PING HACK (Keeps Render Awake)
+// 🛡️ THE PING HACK
 // ==========================================
 app.get('/ping', (req, res) => {
   res.status(200).send('Server is awake and healthy! 🚗');
@@ -55,6 +55,35 @@ const sessionSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 const Session = mongoose.model('Session', sessionSchema);
+
+// ==========================================
+// 🚀 0.9. SECURITY MIDDLEWARE (THE BOUNCER)
+// ==========================================
+const requireAuth = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: "Unauthorized: Missing token." });
+    }
+
+    const token = authHeader.split(' ')[1];
+    const activeSession = await Session.findOne({ sessionToken: token });
+
+    if (!activeSession) {
+      return res.status(403).json({ error: "Session revoked. Please log in again." });
+    }
+
+    // Silently update the last active time
+    activeSession.lastActive = Date.now();
+    await activeSession.save();
+
+    // Pass the securely verified phone number and token to the route
+    req.user = { phone: activeSession.phone, token: token };
+    next();
+  } catch (error) {
+    res.status(500).json({ error: "Authentication error." });
+  }
+};
 
 // ==========================================
 // 1. RIDE REQUEST DATABASE
@@ -113,11 +142,11 @@ app.get('/users/phone/:phone', async (req, res) => {
   }
 });
 
-app.post('/users/verify-driver', async (req, res) => {
+// 🚨 SECURED: Now requires token, and extracts phone securely from req.user
+app.post('/users/verify-driver', requireAuth, async (req, res) => {
   try {
-    const { phone, carModel, carRegistration, dlNumber } = req.body;
-
-    if (!phone) return res.status(400).json({ error: "Phone number is required." });
+    const { carModel, carRegistration, dlNumber } = req.body;
+    const phone = req.user.phone; // Guaranteed by the Bouncer
 
     const user = await User.findOne({ phone });
     if (!user) return res.status(404).json({ error: "User not found." });
@@ -134,11 +163,11 @@ app.post('/users/verify-driver', async (req, res) => {
   }
 });
 
-app.put('/users/update-profile', async (req, res) => {
+// 🚨 SECURED: Now requires token, and extracts phone securely from req.user
+app.put('/users/update-profile', requireAuth, async (req, res) => {
   try {
-    const { phone, name, email, isEmailVerified, altEmail, emgName1, emgPhone1, emgName2, emgPhone2 } = req.body;
-
-    if (!phone) return res.status(400).json({ error: "Phone number is required to update profile." });
+    const { name, email, isEmailVerified, altEmail, emgName1, emgPhone1, emgName2, emgPhone2 } = req.body;
+    const phone = req.user.phone; // Guaranteed by the Bouncer
 
     const user = await User.findOne({ phone });
     if (!user) return res.status(404).json({ error: "User not found." });
@@ -201,7 +230,6 @@ app.post('/auth/request-email-otp', async (req, res) => {
   }
 });
 
-// 🚨 THE FIX: Upgraded to generate and return a secure Session Token
 app.post('/auth/verify-email-otp', async (req, res) => {
   try {
     const { email, otp, name, phone, deviceName, os } = req.body; 
@@ -224,7 +252,6 @@ app.post('/auth/verify-email-otp', async (req, res) => {
       isNewUser = true;
     }
     
-    // Generate secure token and save session
     const sessionToken = crypto.randomBytes(32).toString('hex');
     const newSession = new Session({
       phone: user.phone,
@@ -270,9 +297,11 @@ app.delete('/sessions/revoke/:sessionToken', async (req, res) => {
   }
 });
 
-app.post('/sessions/revoke-others', async (req, res) => {
+// 🚨 SECURED: Protects against cross-user revocation attacks
+app.post('/sessions/revoke-others', requireAuth, async (req, res) => {
   try {
-    const { phone, currentSessionToken } = req.body;
+    const phone = req.user.phone;
+    const currentSessionToken = req.user.token;
     await Session.deleteMany({ 
       phone: phone, 
       sessionToken: { $ne: currentSessionToken } 
@@ -286,9 +315,12 @@ app.post('/sessions/revoke-others', async (req, res) => {
 // ==========================================
 // 6. RIDE CREATION & SEARCH
 // ==========================================
-app.post('/rides', async (req, res) => {
+// 🚨 SECURED
+app.post('/rides', requireAuth, async (req, res) => {
   try {
-    const { route, date, time, seats, price, driverName, driverPhone } = req.body;
+    const { route, date, time, seats, price, driverName } = req.body;
+    const driverPhone = req.user.phone; // Guaranteed
+
     const newRide = new Ride({ route, date, time, seats, price, driverName, driverPhone });
     await newRide.save();
     res.status(201).json({ message: "Ride posted successfully!", ride: newRide });
@@ -319,9 +351,12 @@ app.get('/rides/search', async (req, res) => {
 // ==========================================
 // 7. RIDE REQUESTS
 // ==========================================
-app.post('/requests/send', async (req, res) => {
+// 🚨 SECURED
+app.post('/requests/send', requireAuth, async (req, res) => {
   try {
-    const { rideId, passengerPhone, passengerName, driverPhone, seatsRequested } = req.body;
+    const { rideId, passengerName, driverPhone, seatsRequested } = req.body;
+    const passengerPhone = req.user.phone; // Guaranteed
+
     const isBlocked = await Cooldown.findOne({ passengerPhone, driverPhone });
     if (isBlocked) return res.status(403).json({ error: "This driver recently declined your request. Please wait 1 hour." });
 
@@ -348,11 +383,15 @@ app.get('/requests/inbox/:phone', async (req, res) => {
   }
 });
 
-app.post('/requests/respond', async (req, res) => {
+// 🚨 SECURED
+app.post('/requests/respond', requireAuth, async (req, res) => {
   try {
     const { requestId, status } = req.body; 
+    const driverPhone = req.user.phone; // Verifying actor
+
     const request = await RideRequest.findById(requestId);
     if (!request) return res.status(404).json({ error: "Request not found." });
+    if (request.driverPhone !== driverPhone) return res.status(403).json({ error: "Unauthorized." });
 
     if (status === 'denied') {
       request.status = 'denied';
@@ -398,16 +437,6 @@ app.post('/rides/request-payment-confirmation', async (req, res) => {
     res.status(200).json({ message: "Confirmation request sent to partner!" });
   } catch (error) {
     res.status(500).json({ error: "Failed to send confirmation request." });
-  }
-});
-
-app.post('/rides/request-ride-completion', async (req, res) => {
-  try {
-    const { rideId, requesterPhone, targetPhone, role } = req.body;
-    io.to(targetPhone).emit('ride_completion_requested', { rideId, requesterPhone, role });
-    res.status(200).json({ message: "Handshake sent to partner!" });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to send completion request." });
   }
 });
 
@@ -490,9 +519,12 @@ io.on('connection', (socket) => {
   });
 });
 
-app.post('/messages', async (req, res) => {
+// 🚨 SECURED
+app.post('/messages', requireAuth, async (req, res) => {
   try {
-    const { senderId, receiverId, text } = req.body;
+    const { receiverId, text } = req.body;
+    const senderId = req.user.phone; // Guaranteed
+
     const newMessage = new Message({ senderId, receiverId, text });
     await newMessage.save();
     res.status(201).json({ message: "Message sent!", data: newMessage });
@@ -562,9 +594,12 @@ app.get('/notifications/counts/:phone', async (req, res) => {
 // ==========================================
 // 10. RIDE CANCELLATION
 // ==========================================
-app.post('/rides/cancel-active', async (req, res) => {
+// 🚨 SECURED
+app.post('/rides/cancel-active', requireAuth, async (req, res) => {
   try {
-    const { rideId, cancellerPhone, passengerPhone, role, compensationMsg } = req.body;
+    const { rideId, passengerPhone, role, compensationMsg } = req.body;
+    const cancellerPhone = req.user.phone; // Guaranteed
+
     const ride = await Ride.findById(rideId);
     if (!ride) return res.status(404).json({ error: "Ride not found." });
 
@@ -599,7 +634,7 @@ app.post('/rides/cancel-active', async (req, res) => {
 });
 
 // ==========================================
-// 11. HISTORY ROUTE (🚨 THE FIX & SELF-HEALING)
+// 11. HISTORY ROUTE (SELF-HEALING)
 // ==========================================
 app.get('/rides/history/:phone', async (req, res) => {
   try {
@@ -618,7 +653,6 @@ app.get('/rides/history/:phone', async (req, res) => {
         const hasPassengers = r.passengers && r.passengers.length > 0;
 
         if (r.status === 'completed') {
-          // 🚨 PRESERVE COMPLETE STATUS
           if (hoursPassed >= 24) {
             const expiredDoc = new ExpiredRide({ ...r, status: 'completed', originalRideId: r._id });
             await expiredDoc.save();
@@ -628,7 +662,6 @@ app.get('/rides/history/:phone', async (req, res) => {
             active.push(r);
           }
         } else {
-          // 🚨 24 VS 48 HOUR EXPIRATION LOGIC
           let isExpired = false;
           
           if (hasPassengers && hoursPassed >= 24) {
@@ -668,7 +701,6 @@ app.get('/rides/history/:phone', async (req, res) => {
     const pastExpiredRiding = await ExpiredRide.find({ passengers: phone });
     const pastExpiredPending = await ExpiredRide.find({ originalRideId: { $in: pendingRideIds } });
 
-    // 🚨 SELF-HEALING MAP FOR DRIVERS
     const finalDriving = [...drivingClean.active, ...drivingClean.newlyExpired, ...pastExpiredDriving].map(ride => {
       let r = ride.toObject ? ride.toObject() : ride;
       
@@ -683,7 +715,6 @@ app.get('/rides/history/:phone', async (req, res) => {
       return r;
     });
 
-    // 🚨 SELF-HEALING MAP FOR PASSENGERS
     const finalRiding = [...ridingClean.active, ...ridingClean.newlyExpired, ...pastExpiredRiding, ...cancelledClean].map(ride => {
       let r = ride.toObject ? ride.toObject() : ride;
       
