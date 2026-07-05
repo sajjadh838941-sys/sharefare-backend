@@ -2,12 +2,12 @@ require('dns').setDefaultResultOrder('ipv4first'); // 🚨 Keeps general network
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { Resend } = require('resend'); // ✅ NEW API HIRED
+const { Resend } = require('resend'); 
 const mongoose = require('mongoose');
 const http = require('http'); 
 const { Server } = require('socket.io');
 
-const resend = new Resend(process.env.RESEND_API_KEY); // ✅ API KEY LOADED
+const resend = new Resend(process.env.RESEND_API_KEY); 
 
 const User = require('./models/User');
 const Ride = require('./models/Ride'); 
@@ -25,12 +25,12 @@ mongoose.connect(process.env.MONGO_URI)
   .catch((err) => console.log('Database Connection Error:', err));
 
 // ==========================================
-// 0. OTP DATABASE (NEW DEV MODE SCHEMA)
+// 0. OTP DATABASE 
 // ==========================================
 const otpSchema = new mongoose.Schema({
   phone: { type: String, required: true },
   otp: { type: String, required: true },
-  createdAt: { type: Date, default: Date.now, expires: 300 } // Auto-deletes after 5 minutes
+  createdAt: { type: Date, default: Date.now, expires: 300 } 
 });
 const Otp = mongoose.model('Otp', otpSchema);
 
@@ -81,7 +81,6 @@ app.get('/users/email/:email', async (req, res) => {
   }
 });
 
-// Route for the unified Phone Login flow
 app.get('/users/phone/:phone', async (req, res) => {
   try {
     const user = await User.findOne({ phone: req.params.phone });
@@ -92,7 +91,6 @@ app.get('/users/phone/:phone', async (req, res) => {
   }
 });
 
-// 🚨 THE FIX: NEW DRIVER VERIFICATION ROUTE! 🚨
 app.post('/users/verify-driver', async (req, res) => {
   try {
     const { phone, carModel, carRegistration, dlNumber } = req.body;
@@ -102,22 +100,18 @@ app.post('/users/verify-driver', async (req, res) => {
     const user = await User.findOne({ phone });
     if (!user) return res.status(404).json({ error: "User not found." });
 
-    // Update the user profile with driver details
     user.carModel = carModel;
     user.carRegistration = carRegistration;
     user.drivingLicense = dlNumber; 
     user.isDriverVerified = true;
 
     await user.save();
-
     res.status(200).json({ success: true, user, message: "Driver verified successfully!" });
   } catch (error) {
-    console.error("Verification error:", error);
     res.status(500).json({ error: "Server error during verification." });
   }
 });
 
-// 🚨 THE FIX: NEW UPDATE PROFILE ROUTE! 🚨
 app.put('/users/update-profile', async (req, res) => {
   try {
     const { phone, name, email, isEmailVerified, altEmail, emgName1, emgPhone1, emgName2, emgPhone2 } = req.body;
@@ -127,7 +121,6 @@ app.put('/users/update-profile', async (req, res) => {
     const user = await User.findOne({ phone });
     if (!user) return res.status(404).json({ error: "User not found." });
 
-    // Update all the profile fields
     user.name = name;
     user.email = email;
     user.isEmailVerified = isEmailVerified;
@@ -138,10 +131,8 @@ app.put('/users/update-profile', async (req, res) => {
     user.emgPhone2 = emgPhone2;
 
     await user.save();
-
     res.status(200).json({ success: true, user, message: "Profile updated successfully!" });
   } catch (error) {
-    console.error("Profile update error:", error);
     res.status(500).json({ error: "Server error during profile update." });
   }
 });
@@ -156,7 +147,6 @@ app.post('/auth/request-email-otp', async (req, res) => {
 
     const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // 1. Save to Database instantly
     await Otp.findOneAndUpdate(
       { phone: email }, 
       { otp: generatedOtp, createdAt: Date.now() },
@@ -165,7 +155,6 @@ app.post('/auth/request-email-otp', async (req, res) => {
 
     res.status(200).json({ success: true, message: "OTP processed." });
 
-    // 2. Fire the real email via HTTP
     if (process.env.RESEND_API_KEY) {
       resend.emails.send({
         from: 'ShareFare <onboarding@resend.dev>', 
@@ -179,20 +168,14 @@ app.post('/auth/request-email-otp', async (req, res) => {
             <p>This code will securely expire in 5 minutes.</p>
           </div>
         `
-      }).then((data) => {
-        console.log(`✅ HTTP Email Sent Successfully via Resend!`);
-      }).catch((error) => {
-        console.log("❌ Resend API Error:", error);
-      });
+      }).then(() => console.log(`✅ HTTP Email Sent Successfully via Resend!`))
+        .catch(err => console.log("❌ Resend API Error:", err));
     } else {
       console.log(`⚠️ RESEND_API_KEY Missing! Fallback OTP for ${email}: ${generatedOtp}`);
     }
 
   } catch (error) {
-    console.log("Server error:", error);
-    if (!res.headersSent) {
-      res.status(500).json({ error: "Server error during OTP generation." });
-    }
+    if (!res.headersSent) res.status(500).json({ error: "Server error during OTP generation." });
   }
 });
 
@@ -213,22 +196,12 @@ app.post('/auth/verify-email-otp', async (req, res) => {
     }
 
     if (!user) {
-      user = new User({ 
-        email: email,
-        phone: phone, 
-        name: name.trim(),
-        isEmailVerified: true
-      }); 
+      user = new User({ email, phone, name: name.trim(), isEmailVerified: true }); 
       await user.save();
       isNewUser = true;
     }
     
-    res.status(200).json({ 
-        success: true, 
-        user, 
-        isNewUser, 
-        message: "Authentication successful." 
-    });
+    res.status(200).json({ success: true, user, isNewUser, message: "Authentication successful." });
 
   } catch (error) {
     res.status(500).json({ error: "Server error during verification." });
@@ -551,7 +524,7 @@ app.post('/rides/cancel-active', async (req, res) => {
 });
 
 // ==========================================
-// 11. HISTORY ROUTE
+// 11. HISTORY ROUTE (🚨 THE FIX APPLIED HERE)
 // ==========================================
 app.get('/rides/history/:phone', async (req, res) => {
   try {
@@ -567,14 +540,40 @@ app.get('/rides/history/:phone', async (req, res) => {
         const rideTime = new Date(`${r.date} ${r.time}`);
         const hoursPassed = (now - rideTime) / (1000 * 60 * 60);
 
-        if (hoursPassed >= 24) {
-          const expiredDoc = new ExpiredRide({ ...r, status: 'expired', originalRideId: r._id });
-          await expiredDoc.save();
-          await Ride.findByIdAndDelete(r._id);
-          newlyExpired.push(expiredDoc.toObject());
+        const hasPassengers = r.passengers && r.passengers.length > 0;
+
+        if (r.status === 'completed') {
+          // 🚨 THE FIX 1: If it's already complete, preserve the 'completed' status forever.
+          // We still move it to cold storage after 24 hrs to keep the DB fast.
+          if (hoursPassed >= 24) {
+            const expiredDoc = new ExpiredRide({ ...r, status: 'completed', originalRideId: r._id });
+            await expiredDoc.save();
+            await Ride.findByIdAndDelete(r._id);
+            newlyExpired.push(expiredDoc.toObject());
+          } else {
+            active.push(r);
+          }
         } else {
-          if (!r.status) r.status = 'active'; 
-          active.push(r);
+          // 🚨 THE FIX 2: Advanced Expiration Logic (24 vs 48 Hours)
+          let isExpired = false;
+          
+          if (hasPassengers && hoursPassed >= 24) {
+            // Booked but never hit "Complete". Expires in 24 hours.
+            isExpired = true; 
+          } else if (!hasPassengers && hoursPassed >= 48) {
+            // Empty car. Gives driver 48 hours grace period before expiring.
+            isExpired = true; 
+          }
+
+          if (isExpired) {
+            const expiredDoc = new ExpiredRide({ ...r, status: 'expired', originalRideId: r._id });
+            await expiredDoc.save();
+            await Ride.findByIdAndDelete(r._id);
+            newlyExpired.push(expiredDoc.toObject());
+          } else {
+            if (!r.status) r.status = 'active';
+            active.push(r);
+          }
         }
       }
       return { active, newlyExpired };
