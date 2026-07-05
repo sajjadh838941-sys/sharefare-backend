@@ -6,6 +6,7 @@ const { Resend } = require('resend');
 const mongoose = require('mongoose');
 const http = require('http'); 
 const { Server } = require('socket.io');
+const crypto = require('crypto'); // 🚨 Built-in Node module for generating secure session tokens
 
 const resend = new Resend(process.env.RESEND_API_KEY); 
 
@@ -40,6 +41,20 @@ const otpSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now, expires: 300 } 
 });
 const Otp = mongoose.model('Otp', otpSchema);
+
+// ==========================================
+// 0.5. SECURE SESSIONS DATABASE
+// ==========================================
+const sessionSchema = new mongoose.Schema({
+  phone: { type: String, required: true },
+  sessionToken: { type: String, required: true, unique: true },
+  deviceName: { type: String, default: 'Unknown Device' },
+  os: { type: String, default: 'web' },
+  location: { type: String, default: 'Assam, India' }, 
+  lastActive: { type: Date, default: Date.now },
+  createdAt: { type: Date, default: Date.now }
+});
+const Session = mongoose.model('Session', sessionSchema);
 
 // ==========================================
 // 1. RIDE REQUEST DATABASE
@@ -186,9 +201,10 @@ app.post('/auth/request-email-otp', async (req, res) => {
   }
 });
 
+// 🚨 THE FIX: Upgraded to generate and return a secure Session Token
 app.post('/auth/verify-email-otp', async (req, res) => {
   try {
-    const { email, otp, name, phone } = req.body; 
+    const { email, otp, name, phone, deviceName, os } = req.body; 
 
     const validOtp = await Otp.findOne({ phone: email, otp });
     if (!validOtp) return res.status(400).json({ error: "Invalid or expired OTP." });
@@ -208,10 +224,62 @@ app.post('/auth/verify-email-otp', async (req, res) => {
       isNewUser = true;
     }
     
-    res.status(200).json({ success: true, user, isNewUser, message: "Authentication successful." });
+    // Generate secure token and save session
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    const newSession = new Session({
+      phone: user.phone,
+      sessionToken: sessionToken,
+      deviceName: deviceName || 'Unknown Device',
+      os: os || 'web'
+    });
+    await newSession.save();
+    
+    res.status(200).json({ 
+      success: true, 
+      user, 
+      sessionToken, 
+      isNewUser, 
+      message: "Authentication successful." 
+    });
 
   } catch (error) {
     res.status(500).json({ error: "Server error during verification." });
+  }
+});
+
+// ==========================================
+// 5.5. ACTIVE SESSIONS MANAGEMENT
+// ==========================================
+app.get('/sessions/:phone', async (req, res) => {
+  try {
+    const { phone } = req.params;
+    const sessions = await Session.find({ phone }).sort({ lastActive: -1 });
+    res.status(200).json({ sessions });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch sessions." });
+  }
+});
+
+app.delete('/sessions/revoke/:sessionToken', async (req, res) => {
+  try {
+    const { sessionToken } = req.params;
+    await Session.findOneAndDelete({ sessionToken });
+    res.status(200).json({ message: "Device successfully logged out." });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to revoke session." });
+  }
+});
+
+app.post('/sessions/revoke-others', async (req, res) => {
+  try {
+    const { phone, currentSessionToken } = req.body;
+    await Session.deleteMany({ 
+      phone: phone, 
+      sessionToken: { $ne: currentSessionToken } 
+    });
+    res.status(200).json({ message: "All other devices logged out." });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to revoke other sessions." });
   }
 });
 
