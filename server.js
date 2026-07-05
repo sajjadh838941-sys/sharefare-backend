@@ -25,6 +25,13 @@ mongoose.connect(process.env.MONGO_URI)
   .catch((err) => console.log('Database Connection Error:', err));
 
 // ==========================================
+// 🛡️ THE PING HACK (Keeps Render Awake)
+// ==========================================
+app.get('/ping', (req, res) => {
+  res.status(200).send('Server is awake and healthy! 🚗');
+});
+
+// ==========================================
 // 0. OTP DATABASE 
 // ==========================================
 const otpSchema = new mongoose.Schema({
@@ -524,7 +531,7 @@ app.post('/rides/cancel-active', async (req, res) => {
 });
 
 // ==========================================
-// 11. HISTORY ROUTE (🚨 THE FIX APPLIED HERE)
+// 11. HISTORY ROUTE (🚨 THE FIX & SELF-HEALING)
 // ==========================================
 app.get('/rides/history/:phone', async (req, res) => {
   try {
@@ -543,8 +550,7 @@ app.get('/rides/history/:phone', async (req, res) => {
         const hasPassengers = r.passengers && r.passengers.length > 0;
 
         if (r.status === 'completed') {
-          // 🚨 THE FIX 1: If it's already complete, preserve the 'completed' status forever.
-          // We still move it to cold storage after 24 hrs to keep the DB fast.
+          // 🚨 PRESERVE COMPLETE STATUS
           if (hoursPassed >= 24) {
             const expiredDoc = new ExpiredRide({ ...r, status: 'completed', originalRideId: r._id });
             await expiredDoc.save();
@@ -554,14 +560,12 @@ app.get('/rides/history/:phone', async (req, res) => {
             active.push(r);
           }
         } else {
-          // 🚨 THE FIX 2: Advanced Expiration Logic (24 vs 48 Hours)
+          // 🚨 24 VS 48 HOUR EXPIRATION LOGIC
           let isExpired = false;
           
           if (hasPassengers && hoursPassed >= 24) {
-            // Booked but never hit "Complete". Expires in 24 hours.
             isExpired = true; 
           } else if (!hasPassengers && hoursPassed >= 48) {
-            // Empty car. Gives driver 48 hours grace period before expiring.
             isExpired = true; 
           }
 
@@ -596,14 +600,37 @@ app.get('/rides/history/:phone', async (req, res) => {
     const pastExpiredRiding = await ExpiredRide.find({ passengers: phone });
     const pastExpiredPending = await ExpiredRide.find({ originalRideId: { $in: pendingRideIds } });
 
+    // 🚨 SELF-HEALING MAP FOR DRIVERS
     const finalDriving = [...drivingClean.active, ...drivingClean.newlyExpired, ...pastExpiredDriving].map(ride => {
-      if (ride.passengers.length === 0 && ride.cancelledPassengers?.length > 0) return { ...ride, status: 'cancelled' };
-      return ride;
+      let r = ride.toObject ? ride.toObject() : ride;
+      
+      const hasPassengers = r.passengers && r.passengers.length > 0;
+      const allDone = hasPassengers && r.completedPassengers && r.passengers.every(p => r.completedPassengers.includes(p));
+      
+      if (r.status === 'expired' && allDone) {
+        r.status = 'completed'; 
+      }
+
+      if (r.passengers.length === 0 && r.cancelledPassengers?.length > 0) return { ...r, status: 'cancelled' };
+      return r;
+    });
+
+    // 🚨 SELF-HEALING MAP FOR PASSENGERS
+    const finalRiding = [...ridingClean.active, ...ridingClean.newlyExpired, ...pastExpiredRiding, ...cancelledClean].map(ride => {
+      let r = ride.toObject ? ride.toObject() : ride;
+      
+      const hasPassengers = r.passengers && r.passengers.length > 0;
+      const allDone = hasPassengers && r.completedPassengers && r.passengers.every(p => r.completedPassengers.includes(p));
+      
+      if (r.status === 'expired' && allDone) {
+        r.status = 'completed'; 
+      }
+      return r;
     });
 
     res.status(200).json({ 
       driving: finalDriving, 
-      riding: [...ridingClean.active, ...ridingClean.newlyExpired, ...pastExpiredRiding, ...cancelledClean], 
+      riding: finalRiding, 
       pending: [...pendingClean.active, ...pendingClean.newlyExpired, ...pastExpiredPending] 
     });
   } catch (error) {
