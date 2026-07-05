@@ -1,4 +1,4 @@
-require('dns').setDefaultResultOrder('ipv4first'); 
+require('dns').setDefaultResultOrder('ipv4first'); // 🚨 Keeps general network traffic stable
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -211,73 +211,14 @@ app.post('/auth/request-email-otp', async (req, res) => {
         from: 'ShareFare Axom <noreply@sharefareaxom.in>', 
         to: email, 
         subject: 'Your ShareFare Axom Verification Code',
-        html: `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Verify your ShareFare Axom account</title>
-        </head>
-        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f5; margin: 0; padding: 0;">
-  
-          <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f5; padding: 40px 20px;">
-            <tr>
-              <td align="center">
-        
-                <table cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); max-width: 600px; width: 100%; overflow: hidden; border: 1px solid #e5e7eb;">
-          
-                  <!-- Header Area -->
-                  <tr>
-                    <td style="background-color: #2563eb; padding: 24px; text-align: center;">
-                      <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0.5px;">ShareFare Axom</h1>
-                    </td>
-                  </tr>
-          
-                  <!-- Main Content -->
-                  <tr>
-                    <td style="padding: 32px;">
-                      <h2 style="color: #1f2937; font-size: 20px; margin-top: 0; margin-bottom: 16px;">Verify your email address</h2>
-              
-                      <p style="color: #4b5563; font-size: 16px; line-height: 1.6; margin-top: 0; margin-bottom: 24px;">
-                        Welcome to ShareFare Axom! To complete your registration and start sharing rides, please use the 6-digit verification code below.
-                      </p>
-              
-                      <!-- OTP Box -->
-                      <div style="background-color: #eff6ff; border: 1px dashed #93c5fd; border-radius: 8px; padding: 24px; text-align: center; margin-bottom: 24px;">
-                <span style="font-family: 'Courier New', Courier, monospace; font-size: 36px; font-weight: 700; color: #1d4ed8; letter-spacing: 6px;">{{OTP_CODE}}</span>
-                      </div>
-              
-                      <p style="color: #4b5563; font-size: 14px; line-height: 1.6; margin-top: 0; margin-bottom: 24px;">
-                        This code will expire in 10 minutes. If you did not attempt to sign up for ShareFare Axom, you can safely ignore this email.
-                      </p>
-              
-                      <p style="color: #1f2937; font-size: 16px; line-height: 1.6; margin-bottom: 0;">
-                        Safe travels,<br>
-                        <strong>The ShareFare Axom Team</strong>
-                      </p>
-                    </td>
-                  </tr>
-          
-                  <!-- Footer Area -->
-                  <tr>
-                    <td style="background-color: #f9fafb; padding: 16px; text-align: center; border-top: 1px solid #e5e7eb;">
-                      <p style="color: #9ca3af; font-size: 12px; margin: 0;">
-                        &copy; 2026 ShareFare Axom. All rights reserved.
-                      </p>
-                    </td>
-                  </tr>
-          
-                </table>
-        
-              </td>
-            </tr>
-          </table>
-  
-        </body>
-        </html>
-        `
-      }).then(() => console.log(`✅ HTTP Email Sent Successfully via Resend!`))
+        // 🚨 THE FIX: HTML is gone, replaced entirely by the Template API!
+        template: {
+          id: 'email-verification',
+          variables: {
+            OTP_CODE: generatedOtp
+          }
+        }
+      }).then(() => console.log(`✅ HTTP Template Email Sent Successfully via Resend!`))
         .catch(err => console.log("❌ Resend API Error:", err));
     } else {
       console.log(`⚠️ RESEND_API_KEY Missing! Fallback OTP for ${email}: ${generatedOtp}`);
@@ -502,6 +443,16 @@ app.post('/rides/request-payment-confirmation', async (req, res) => {
     res.status(200).json({ message: "Confirmation request sent to partner!" });
   } catch (error) {
     res.status(500).json({ error: "Failed to send confirmation request." });
+  }
+});
+
+app.post('/rides/request-ride-completion', async (req, res) => {
+  try {
+    const { rideId, requesterPhone, targetPhone, role } = req.body;
+    io.to(targetPhone).emit('ride_completion_requested', { rideId, requesterPhone, role });
+    res.status(200).json({ message: "Handshake sent to partner!" });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to send completion request." });
   }
 });
 
