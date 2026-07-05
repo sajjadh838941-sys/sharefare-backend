@@ -208,16 +208,74 @@ app.post('/auth/request-email-otp', async (req, res) => {
 
     if (process.env.RESEND_API_KEY) {
       resend.emails.send({
-        from: 'ShareFare <noreply@sharefareaxom.in>', 
+        from: 'ShareFare Axom <noreply@sharefareaxom.in>', 
         to: email, 
         subject: 'Your ShareFare Axom Verification Code',
         html: `
-          <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
-            <h2>Welcome to ShareFare Axom! 🚗</h2>
-            <p>Your one-time login code is:</p>
-            <h1 style="color: #4F46E5; letter-spacing: 5px;">${generatedOtp}</h1>
-            <p>This code will securely expire in 5 minutes.</p>
-          </div>
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Verify your ShareFare Axom account</title>
+        </head>
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f5; margin: 0; padding: 0;">
+  
+          <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f5; padding: 40px 20px;">
+            <tr>
+              <td align="center">
+        
+                <table cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); max-width: 600px; width: 100%; overflow: hidden; border: 1px solid #e5e7eb;">
+          
+                  <!-- Header Area -->
+                  <tr>
+                    <td style="background-color: #2563eb; padding: 24px; text-align: center;">
+                      <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0.5px;">ShareFare Axom</h1>
+                    </td>
+                  </tr>
+          
+                  <!-- Main Content -->
+                  <tr>
+                    <td style="padding: 32px;">
+                      <h2 style="color: #1f2937; font-size: 20px; margin-top: 0; margin-bottom: 16px;">Verify your email address</h2>
+              
+                      <p style="color: #4b5563; font-size: 16px; line-height: 1.6; margin-top: 0; margin-bottom: 24px;">
+                        Welcome to ShareFare Axom! To complete your registration and start sharing rides, please use the 6-digit verification code below.
+                      </p>
+              
+                      <!-- OTP Box -->
+                      <div style="background-color: #eff6ff; border: 1px dashed #93c5fd; border-radius: 8px; padding: 24px; text-align: center; margin-bottom: 24px;">
+                <span style="font-family: 'Courier New', Courier, monospace; font-size: 36px; font-weight: 700; color: #1d4ed8; letter-spacing: 6px;">{{OTP_CODE}}</span>
+                      </div>
+              
+                      <p style="color: #4b5563; font-size: 14px; line-height: 1.6; margin-top: 0; margin-bottom: 24px;">
+                        This code will expire in 10 minutes. If you did not attempt to sign up for ShareFare Axom, you can safely ignore this email.
+                      </p>
+              
+                      <p style="color: #1f2937; font-size: 16px; line-height: 1.6; margin-bottom: 0;">
+                        Safe travels,<br>
+                        <strong>The ShareFare Axom Team</strong>
+                      </p>
+                    </td>
+                  </tr>
+          
+                  <!-- Footer Area -->
+                  <tr>
+                    <td style="background-color: #f9fafb; padding: 16px; text-align: center; border-top: 1px solid #e5e7eb;">
+                      <p style="color: #9ca3af; font-size: 12px; margin: 0;">
+                        &copy; 2026 ShareFare Axom. All rights reserved.
+                      </p>
+                    </td>
+                  </tr>
+          
+                </table>
+        
+              </td>
+            </tr>
+          </table>
+  
+        </body>
+        </html>
         `
       }).then(() => console.log(`✅ HTTP Email Sent Successfully via Resend!`))
         .catch(err => console.log("❌ Resend API Error:", err));
