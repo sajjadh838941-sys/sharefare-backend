@@ -208,7 +208,7 @@ app.post('/auth/request-email-otp', async (req, res) => {
 
     if (process.env.RESEND_API_KEY) {
       resend.emails.send({
-        from: 'ShareFare <onboarding@resend.dev>', 
+        from: 'ShareFare <noreply@sharefareaxom.in>', 
         to: email, 
         subject: 'Your ShareFare Axom Verification Code',
         html: `
