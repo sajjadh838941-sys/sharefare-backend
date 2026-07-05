@@ -142,11 +142,11 @@ app.get('/users/phone/:phone', async (req, res) => {
   }
 });
 
-// 🚨 SECURED: Now requires token, and extracts phone securely from req.user
+// 🚨 SECURED
 app.post('/users/verify-driver', requireAuth, async (req, res) => {
   try {
     const { carModel, carRegistration, dlNumber } = req.body;
-    const phone = req.user.phone; // Guaranteed by the Bouncer
+    const phone = req.user.phone; 
 
     const user = await User.findOne({ phone });
     if (!user) return res.status(404).json({ error: "User not found." });
@@ -163,11 +163,11 @@ app.post('/users/verify-driver', requireAuth, async (req, res) => {
   }
 });
 
-// 🚨 SECURED: Now requires token, and extracts phone securely from req.user
+// 🚨 SECURED
 app.put('/users/update-profile', requireAuth, async (req, res) => {
   try {
     const { name, email, isEmailVerified, altEmail, emgName1, emgPhone1, emgName2, emgPhone2 } = req.body;
-    const phone = req.user.phone; // Guaranteed by the Bouncer
+    const phone = req.user.phone; 
 
     const user = await User.findOne({ phone });
     if (!user) return res.status(404).json({ error: "User not found." });
@@ -287,25 +287,35 @@ app.get('/sessions/:phone', async (req, res) => {
   }
 });
 
+// 🚨 THE KILL SWITCH 1: Single Session Revoke
 app.delete('/sessions/revoke/:sessionToken', async (req, res) => {
   try {
     const { sessionToken } = req.params;
-    await Session.findOneAndDelete({ sessionToken });
+    const session = await Session.findOneAndDelete({ sessionToken });
+    
+    if (session) {
+      io.to(session.phone).emit('session_killed', { revokedToken: sessionToken });
+    }
+    
     res.status(200).json({ message: "Device successfully logged out." });
   } catch (error) {
     res.status(500).json({ error: "Failed to revoke session." });
   }
 });
 
-// 🚨 SECURED: Protects against cross-user revocation attacks
+// 🚨 THE KILL SWITCH 2: Revoke All Others
 app.post('/sessions/revoke-others', requireAuth, async (req, res) => {
   try {
     const phone = req.user.phone;
     const currentSessionToken = req.user.token;
+    
     await Session.deleteMany({ 
       phone: phone, 
       sessionToken: { $ne: currentSessionToken } 
     });
+    
+    io.to(phone).emit('all_others_killed', { survivorToken: currentSessionToken });
+    
     res.status(200).json({ message: "All other devices logged out." });
   } catch (error) {
     res.status(500).json({ error: "Failed to revoke other sessions." });
@@ -315,11 +325,10 @@ app.post('/sessions/revoke-others', requireAuth, async (req, res) => {
 // ==========================================
 // 6. RIDE CREATION & SEARCH
 // ==========================================
-// 🚨 SECURED
 app.post('/rides', requireAuth, async (req, res) => {
   try {
     const { route, date, time, seats, price, driverName } = req.body;
-    const driverPhone = req.user.phone; // Guaranteed
+    const driverPhone = req.user.phone; 
 
     const newRide = new Ride({ route, date, time, seats, price, driverName, driverPhone });
     await newRide.save();
@@ -351,11 +360,10 @@ app.get('/rides/search', async (req, res) => {
 // ==========================================
 // 7. RIDE REQUESTS
 // ==========================================
-// 🚨 SECURED
 app.post('/requests/send', requireAuth, async (req, res) => {
   try {
     const { rideId, passengerName, driverPhone, seatsRequested } = req.body;
-    const passengerPhone = req.user.phone; // Guaranteed
+    const passengerPhone = req.user.phone; 
 
     const isBlocked = await Cooldown.findOne({ passengerPhone, driverPhone });
     if (isBlocked) return res.status(403).json({ error: "This driver recently declined your request. Please wait 1 hour." });
@@ -383,11 +391,10 @@ app.get('/requests/inbox/:phone', async (req, res) => {
   }
 });
 
-// 🚨 SECURED
 app.post('/requests/respond', requireAuth, async (req, res) => {
   try {
     const { requestId, status } = req.body; 
-    const driverPhone = req.user.phone; // Verifying actor
+    const driverPhone = req.user.phone; 
 
     const request = await RideRequest.findById(requestId);
     if (!request) return res.status(404).json({ error: "Request not found." });
@@ -519,11 +526,10 @@ io.on('connection', (socket) => {
   });
 });
 
-// 🚨 SECURED
 app.post('/messages', requireAuth, async (req, res) => {
   try {
     const { receiverId, text } = req.body;
-    const senderId = req.user.phone; // Guaranteed
+    const senderId = req.user.phone; 
 
     const newMessage = new Message({ senderId, receiverId, text });
     await newMessage.save();
@@ -594,11 +600,10 @@ app.get('/notifications/counts/:phone', async (req, res) => {
 // ==========================================
 // 10. RIDE CANCELLATION
 // ==========================================
-// 🚨 SECURED
 app.post('/rides/cancel-active', requireAuth, async (req, res) => {
   try {
     const { rideId, passengerPhone, role, compensationMsg } = req.body;
-    const cancellerPhone = req.user.phone; // Guaranteed
+    const cancellerPhone = req.user.phone; 
 
     const ride = await Ride.findById(rideId);
     if (!ride) return res.status(404).json({ error: "Ride not found." });
@@ -634,7 +639,7 @@ app.post('/rides/cancel-active', requireAuth, async (req, res) => {
 });
 
 // ==========================================
-// 11. HISTORY ROUTE (SELF-HEALING)
+// 11. HISTORY ROUTE 
 // ==========================================
 app.get('/rides/history/:phone', async (req, res) => {
   try {
