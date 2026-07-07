@@ -11,7 +11,10 @@ const crypto = require('crypto');
 const resend = new Resend(process.env.RESEND_API_KEY); 
 
 const User = require('./models/User');
-const Ride = require('./models/Ride'); 
+// Note: You mentioned a separate file for Ride model in the imports, 
+// but since we define models in this file, we will define Ride here.
+// If you have a separate models/Ride.js file, you MUST put this schema there instead!
+// Assuming you want it here for now based on your previous code structure:
 const Message = require('./models/Messages');
 
 const app = express();
@@ -86,8 +89,35 @@ const requireAuth = async (req, res, next) => {
 };
 
 // ==========================================
-// 1. RIDE REQUEST DATABASE
+// 1. RIDE REQUEST DATABASE & MAIN RIDE SCHEMA
 // ==========================================
+
+// 🚨 THE FIX: Redefined Ride Schema to accept Map Brain Geometry
+const rideSchema = new mongoose.Schema({
+  route: { type: [String], required: true },
+  date: { type: String, required: true },
+  time: { type: String, required: true },
+  seats: { type: Number, required: true },
+  price: { type: Number, required: true },
+  driverName: { type: String, required: true },
+  driverPhone: { type: String, required: true },
+  passengers: { type: [String], default: [] },
+  cancelledPassengers: { type: [String], default: [] },
+  paidPassengers: { type: [String], default: [] },
+  completedPassengers: { type: [String], default: [] },
+  status: { type: String, default: 'active' },
+
+  // 🚨 NEW FIELDS FOR MAP BRAIN
+  osrmPolyline: { type: mongoose.Schema.Types.Mixed, default: null }, // Allows the massive Turf.js Geometry array
+  routeDistanceKm: { type: String, default: null },
+
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
+});
+// Note: Checking if model already exists prevents server crash on reload
+const Ride = mongoose.models.Ride || mongoose.model('Ride', rideSchema);
+
+
 const requestSchema = new mongoose.Schema({
   rideId: String,
   passengerPhone: String, 
@@ -211,7 +241,6 @@ app.post('/auth/request-email-otp', async (req, res) => {
         from: 'ShareFare Axom <noreply@sharefareaxom.in>', 
         to: email, 
         subject: 'Your ShareFare Axom Verification Code',
-        // 🚨 THE FIX: HTML is gone, replaced entirely by the Template API!
         template: {
           id: 'email-verification',
           variables: {
@@ -326,31 +355,38 @@ app.post('/sessions/revoke-others', requireAuth, async (req, res) => {
 // ==========================================
 app.post('/rides', requireAuth, async (req, res) => {
   try {
-    const { route, date, time, seats, price, driverName } = req.body;
+    const { route, date, time, seats, price, driverName, osrmPolyline, routeDistanceKm } = req.body;
     const driverPhone = req.user.phone; 
 
-    const newRide = new Ride({ route, date, time, seats, price, driverName, driverPhone });
+    // 🚨 THE FIX: Storing Polyline and Distance in the Database
+    const newRide = new Ride({ 
+      route, 
+      date, 
+      time, 
+      seats, 
+      price, 
+      driverName, 
+      driverPhone,
+      osrmPolyline, 
+      routeDistanceKm 
+    });
+    
     await newRide.save();
     res.status(201).json({ message: "Ride posted successfully!", ride: newRide });
   } catch (error) {
+    console.error("Post Ride Error:", error);
     res.status(400).json({ error: "Failed to post ride" });
   }
 });
 
 app.get('/rides/search', async (req, res) => {
   try {
-    const { departure, destination, date } = req.query;
-    const ridesOnDate = await Ride.find({ date: date, seats: { $gt: 0 } });
+    const { date, seats } = req.query; // 🚨 Removed departure/destination to allow frontend filtering
+    const ridesOnDate = await Ride.find({ date: date, seats: { $gte: parseInt(seats) || 1 } });
     
-    const validRides = ridesOnDate.filter(ride => {
-      const cleanRoute = ride.route.map(city => city.toLowerCase().trim());
-      const cleanDep = departure.toLowerCase().trim();
-      const cleanDest = destination.toLowerCase().trim();
-      const startIndex = cleanRoute.indexOf(cleanDep);
-      const destIndex = cleanRoute.indexOf(cleanDest);
-      return startIndex !== -1 && destIndex !== -1 && startIndex < destIndex;
-    });
-    res.status(200).json({ rides: validRides });
+    // We send ALL available rides for that date to the frontend
+    // The frontend MapBrain (checkSubRouteMatch) will filter them mathematically
+    res.status(200).json({ rides: ridesOnDate });
   } catch (error) {
     res.status(500).json({ error: "Failed to search for rides." });
   }
