@@ -20,7 +20,12 @@ const rideSchema = new mongoose.Schema({
   paidPassengers: { type: [String], default: [] },
   completedPassengers: { type: [String], default: [] },
   
-  status: { type: String, default: 'active' }
+  status: { type: String, default: 'active' },
+
+  // 🚨 THE FIX: Tell Mongoose to allow the Map Brain data! 🚨
+  osrmPolyline: { type: mongoose.Schema.Types.Mixed, default: null }, // 'Mixed' allows the massive geometry object
+  routeDistanceKm: { type: String, default: null }
+
 }, { 
   timestamps: true 
 });
