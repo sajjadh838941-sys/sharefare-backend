@@ -11,10 +11,6 @@ const crypto = require('crypto');
 const resend = new Resend(process.env.RESEND_API_KEY); 
 
 const User = require('./models/User');
-// Note: You mentioned a separate file for Ride model in the imports, 
-// but since we define models in this file, we will define Ride here.
-// If you have a separate models/Ride.js file, you MUST put this schema there instead!
-// Assuming you want it here for now based on your previous code structure:
 const Message = require('./models/Messages');
 
 const app = express();
@@ -76,11 +72,9 @@ const requireAuth = async (req, res, next) => {
       return res.status(403).json({ error: "Session revoked. Please log in again." });
     }
 
-    // Silently update the last active time
     activeSession.lastActive = Date.now();
     await activeSession.save();
 
-    // Pass the securely verified phone number and token to the route
     req.user = { phone: activeSession.phone, token: token };
     next();
   } catch (error) {
@@ -92,7 +86,6 @@ const requireAuth = async (req, res, next) => {
 // 1. RIDE REQUEST DATABASE & MAIN RIDE SCHEMA
 // ==========================================
 
-// 🚨 THE FIX: Redefined Ride Schema to accept Map Brain Geometry
 const rideSchema = new mongoose.Schema({
   route: { type: [String], required: true },
   date: { type: String, required: true },
@@ -101,20 +94,26 @@ const rideSchema = new mongoose.Schema({
   price: { type: Number, required: true },
   driverName: { type: String, required: true },
   driverPhone: { type: String, required: true },
+  
+  // 🚨 NEW: Stores the exact car chosen for this specific ride
+  carUsed: {
+    carModel: { type: String },
+    carRegistration: { type: String },
+    mileage: { type: String }
+  },
+
   passengers: { type: [String], default: [] },
   cancelledPassengers: { type: [String], default: [] },
   paidPassengers: { type: [String], default: [] },
   completedPassengers: { type: [String], default: [] },
   status: { type: String, default: 'active' },
 
-  // 🚨 NEW FIELDS FOR MAP BRAIN
-  osrmPolyline: { type: mongoose.Schema.Types.Mixed, default: null }, // Allows the massive Turf.js Geometry array
+  osrmPolyline: { type: mongoose.Schema.Types.Mixed, default: null }, 
   routeDistanceKm: { type: String, default: null },
 
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
-// Note: Checking if model already exists prevents server crash on reload
 const Ride = mongoose.models.Ride || mongoose.model('Ride', rideSchema);
 
 
@@ -172,18 +171,17 @@ app.get('/users/phone/:phone', async (req, res) => {
   }
 });
 
-// 🚨 SECURED
+// 🚨 SECURED & UPDATED FOR MULTIPLE CARS
 app.post('/users/verify-driver', requireAuth, async (req, res) => {
   try {
-    const { carModel, carRegistration, dlNumber } = req.body;
+    const { dlNumber, cars } = req.body; // Fetching the array of cars
     const phone = req.user.phone; 
 
     const user = await User.findOne({ phone });
     if (!user) return res.status(404).json({ error: "User not found." });
 
-    user.carModel = carModel;
-    user.carRegistration = carRegistration;
     user.drivingLicense = dlNumber; 
+    user.cars = cars; // Save the entire array to the user profile
     user.isDriverVerified = true;
 
     await user.save();
@@ -193,7 +191,6 @@ app.post('/users/verify-driver', requireAuth, async (req, res) => {
   }
 });
 
-// 🚨 SECURED
 app.put('/users/update-profile', requireAuth, async (req, res) => {
   try {
     const { name, email, isEmailVerified, altEmail, emgName1, emgPhone1, emgName2, emgPhone2 } = req.body;
@@ -241,18 +238,12 @@ app.post('/auth/request-email-otp', async (req, res) => {
         from: 'ShareFare Axom <noreply@sharefareaxom.in>', 
         to: email, 
         subject: 'Your ShareFare Axom Verification Code',
-        template: {
-          id: 'email-verification',
-          variables: {
-            OTP_CODE: generatedOtp
-          }
-        }
+        template: { id: 'email-verification', variables: { OTP_CODE: generatedOtp } }
       }).then(() => console.log(`✅ HTTP Template Email Sent Successfully via Resend!`))
         .catch(err => console.log("❌ Resend API Error:", err));
     } else {
       console.log(`⚠️ RESEND_API_KEY Missing! Fallback OTP for ${email}: ${generatedOtp}`);
     }
-
   } catch (error) {
     if (!res.headersSent) res.status(500).json({ error: "Server error during OTP generation." });
   }
@@ -281,22 +272,10 @@ app.post('/auth/verify-email-otp', async (req, res) => {
     }
     
     const sessionToken = crypto.randomBytes(32).toString('hex');
-    const newSession = new Session({
-      phone: user.phone,
-      sessionToken: sessionToken,
-      deviceName: deviceName || 'Unknown Device',
-      os: os || 'web'
-    });
+    const newSession = new Session({ phone: user.phone, sessionToken: sessionToken, deviceName: deviceName || 'Unknown Device', os: os || 'web' });
     await newSession.save();
     
-    res.status(200).json({ 
-      success: true, 
-      user, 
-      sessionToken, 
-      isNewUser, 
-      message: "Authentication successful." 
-    });
-
+    res.status(200).json({ success: true, user, sessionToken, isNewUser, message: "Authentication successful." });
   } catch (error) {
     res.status(500).json({ error: "Server error during verification." });
   }
@@ -315,35 +294,23 @@ app.get('/sessions/:phone', async (req, res) => {
   }
 });
 
-// 🚨 THE KILL SWITCH 1: Single Session Revoke
 app.delete('/sessions/revoke/:sessionToken', async (req, res) => {
   try {
     const { sessionToken } = req.params;
     const session = await Session.findOneAndDelete({ sessionToken });
-    
-    if (session) {
-      io.to(session.phone).emit('session_killed', { revokedToken: sessionToken });
-    }
-    
+    if (session) io.to(session.phone).emit('session_killed', { revokedToken: sessionToken });
     res.status(200).json({ message: "Device successfully logged out." });
   } catch (error) {
     res.status(500).json({ error: "Failed to revoke session." });
   }
 });
 
-// 🚨 THE KILL SWITCH 2: Revoke All Others
 app.post('/sessions/revoke-others', requireAuth, async (req, res) => {
   try {
     const phone = req.user.phone;
     const currentSessionToken = req.user.token;
-    
-    await Session.deleteMany({ 
-      phone: phone, 
-      sessionToken: { $ne: currentSessionToken } 
-    });
-    
+    await Session.deleteMany({ phone: phone, sessionToken: { $ne: currentSessionToken } });
     io.to(phone).emit('all_others_killed', { survivorToken: currentSessionToken });
-    
     res.status(200).json({ message: "All other devices logged out." });
   } catch (error) {
     res.status(500).json({ error: "Failed to revoke other sessions." });
@@ -353,22 +320,15 @@ app.post('/sessions/revoke-others', requireAuth, async (req, res) => {
 // ==========================================
 // 6. RIDE CREATION & SEARCH
 // ==========================================
+// 🚨 UPDATED: Now receives and saves `carUsed`
 app.post('/rides', requireAuth, async (req, res) => {
   try {
-    const { route, date, time, seats, price, driverName, osrmPolyline, routeDistanceKm } = req.body;
+    const { route, date, time, seats, price, driverName, osrmPolyline, routeDistanceKm, carUsed } = req.body;
     const driverPhone = req.user.phone; 
 
-    // 🚨 THE FIX: Storing Polyline and Distance in the Database
     const newRide = new Ride({ 
-      route, 
-      date, 
-      time, 
-      seats, 
-      price, 
-      driverName, 
-      driverPhone,
-      osrmPolyline, 
-      routeDistanceKm 
+      route, date, time, seats, price, driverName, driverPhone,
+      osrmPolyline, routeDistanceKm, carUsed 
     });
     
     await newRide.save();
@@ -381,11 +341,8 @@ app.post('/rides', requireAuth, async (req, res) => {
 
 app.get('/rides/search', async (req, res) => {
   try {
-    const { date, seats } = req.query; // 🚨 Removed departure/destination to allow frontend filtering
+    const { date, seats } = req.query; 
     const ridesOnDate = await Ride.find({ date: date, seats: { $gte: parseInt(seats) || 1 } });
-    
-    // We send ALL available rides for that date to the frontend
-    // The frontend MapBrain (checkSubRouteMatch) will filter them mathematically
     res.status(200).json({ rides: ridesOnDate });
   } catch (error) {
     res.status(500).json({ error: "Failed to search for rides." });
@@ -459,8 +416,14 @@ app.post('/requests/respond', requireAuth, async (req, res) => {
       const autoMessage = new Message({ senderId: request.driverPhone, receiverId: request.passengerPhone, text: "Ride confirmed! You can now chat here to coordinate pickup." });
       await autoMessage.save();
 
+      // 🚨 UPDATED: Pulling the car info from the ride itself, not the general driver profile
       io.to(request.passengerPhone).emit('ride_request_result', {
-        status: 'accepted', rideId: request.rideId, driverPhone: request.driverPhone, driverName: driver.name, carModel: driver.carModel, carRegistration: driver.carRegistration
+        status: 'accepted', 
+        rideId: request.rideId, 
+        driverPhone: request.driverPhone, 
+        driverName: driver.name, 
+        carModel: ride.carUsed?.carModel || 'Unknown', 
+        carRegistration: ride.carUsed?.carRegistration || 'Unknown'
       });
       return res.status(200).json({ message: "Ride accepted and request deleted!" });
     }
@@ -521,18 +484,10 @@ app.post('/rides/complete-passenger', async (req, res) => {
     const driver = await User.findOne({ phone: ride.driverPhone });
     const passenger = await User.findOne({ phone: passengerPhone });
 
-    const msgToPassenger = new Message({
-      senderId: ride.driverPhone,
-      receiverId: passengerPhone,
-      text: `Ride Complete! You paid INR ${ride.price} to ${driver?.name || 'your driver'}.`
-    });
+    const msgToPassenger = new Message({ senderId: ride.driverPhone, receiverId: passengerPhone, text: `Ride Complete! You paid INR ${ride.price} to ${driver?.name || 'your driver'}.` });
     await msgToPassenger.save();
 
-    const msgToDriver = new Message({
-      senderId: passengerPhone,
-      receiverId: ride.driverPhone,
-      text: `Payment Confirmed! You received payment from ${passenger?.name || 'your passenger'}.`
-    });
+    const msgToDriver = new Message({ senderId: passengerPhone, receiverId: ride.driverPhone, text: `Payment Confirmed! You received payment from ${passenger?.name || 'your passenger'}.` });
     await msgToDriver.save();
 
     io.to(passengerPhone).emit('payment_completed_success', { rideId, passengerPhone });
@@ -563,12 +518,8 @@ app.get('/rides/check-payment/:rideId/:passengerPhone', async (req, res) => {
 // 9. MESSAGING & NOTIFICATIONS
 // ==========================================
 io.on('connection', (socket) => {
-  socket.on('join_private_room', (phone) => { 
-    socket.join(phone);
-  });
-  socket.on('send_private_message', (data) => {
-    io.to(data.receiverId).emit('receive_message', data);
-  });
+  socket.on('join_private_room', (phone) => { socket.join(phone); });
+  socket.on('send_private_message', (data) => { io.to(data.receiverId).emit('receive_message', data); });
 });
 
 app.post('/messages', requireAuth, async (req, res) => {
@@ -620,10 +571,7 @@ app.get('/inbox/:userId', async (req, res) => {
 app.post('/messages/mark-read', async (req, res) => {
   try {
     const { senderId, receiverId } = req.body;
-    await Message.updateMany(
-      { senderId, receiverId, isRead: false },
-      { $set: { isRead: true } }
-    );
+    await Message.updateMany({ senderId, receiverId, isRead: false }, { $set: { isRead: true } });
     io.to(receiverId).emit('messages_read');
     res.status(200).json({ message: "Messages marked as read!" });
   } catch (error) {
@@ -664,8 +612,9 @@ app.post('/rides/cancel-active', requireAuth, async (req, res) => {
     let notifText = "";
     let receiverPhone = role === 'driver' ? passengerPhone : ride.driverPhone;
 
+    // 🚨 UPDATED: Pull car details directly from the specific ride
     if (role === 'driver') {
-      const carInfo = canceller.carModel ? `${canceller.carModel} (${canceller.carRegistration})` : 'Driver';
+      const carInfo = ride.carUsed ? `${ride.carUsed.carModel} (${ride.carUsed.carRegistration})` : 'Driver';
       notifText = `SYSTEM MESSAGE: Your ride has been cancelled by ${canceller.name} [${carInfo}].\nMessage from driver: "${compensationMsg}"`;
     } else {
       notifText = `SYSTEM MESSAGE: Passenger ${canceller.name} has cancelled their confirmed seat.\nReason: "${compensationMsg}"`;
@@ -674,7 +623,12 @@ app.post('/rides/cancel-active', requireAuth, async (req, res) => {
     const sysMessage = new Message({ senderId: cancellerPhone, receiverId: receiverPhone, text: notifText, isRead: false });
     await sysMessage.save();
 
-    io.to(receiverPhone).emit('ride_cancelled_alert', { cancellerName: canceller.name, role, message: compensationMsg, carDetails: canceller.carModel ? `${canceller.carModel} (${canceller.carRegistration})` : '' });
+    io.to(receiverPhone).emit('ride_cancelled_alert', { 
+      cancellerName: canceller.name, 
+      role, 
+      message: compensationMsg, 
+      carDetails: ride.carUsed ? `${ride.carUsed.carModel} (${ride.carUsed.carRegistration})` : '' 
+    });
     io.to(receiverPhone).emit('receive_message', sysMessage);
 
     res.status(200).json({ message: "Cancellation processed!" });
@@ -753,27 +707,18 @@ app.get('/rides/history/:phone', async (req, res) => {
 
     const finalDriving = [...drivingClean.active, ...drivingClean.newlyExpired, ...pastExpiredDriving].map(ride => {
       let r = ride.toObject ? ride.toObject() : ride;
-      
       const hasPassengers = r.passengers && r.passengers.length > 0;
       const allDone = hasPassengers && r.completedPassengers && r.passengers.every(p => r.completedPassengers.includes(p));
-      
-      if (r.status === 'expired' && allDone) {
-        r.status = 'completed'; 
-      }
-
+      if (r.status === 'expired' && allDone) { r.status = 'completed'; }
       if (r.passengers.length === 0 && r.cancelledPassengers?.length > 0) return { ...r, status: 'cancelled' };
       return r;
     });
 
     const finalRiding = [...ridingClean.active, ...ridingClean.newlyExpired, ...pastExpiredRiding, ...cancelledClean].map(ride => {
       let r = ride.toObject ? ride.toObject() : ride;
-      
       const hasPassengers = r.passengers && r.passengers.length > 0;
       const allDone = hasPassengers && r.completedPassengers && r.passengers.every(p => r.completedPassengers.includes(p));
-      
-      if (r.status === 'expired' && allDone) {
-        r.status = 'completed'; 
-      }
+      if (r.status === 'expired' && allDone) { r.status = 'completed'; }
       return r;
     });
 
