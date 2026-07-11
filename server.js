@@ -174,14 +174,14 @@ app.get('/users/phone/:phone', async (req, res) => {
 // 🚨 SECURED & UPDATED FOR MULTIPLE CARS
 app.post('/users/verify-driver', requireAuth, async (req, res) => {
   try {
-    const { dlNumber, cars } = req.body; // Fetching the array of cars
+    const { dlNumber, cars } = req.body; 
     const phone = req.user.phone; 
 
     const user = await User.findOne({ phone });
     if (!user) return res.status(404).json({ error: "User not found." });
 
     user.drivingLicense = dlNumber; 
-    user.cars = cars; // Save the entire array to the user profile
+    user.cars = cars; 
     user.isDriverVerified = true;
 
     await user.save();
@@ -212,6 +212,34 @@ app.put('/users/update-profile', requireAuth, async (req, res) => {
     res.status(200).json({ success: true, user, message: "Profile updated successfully!" });
   } catch (error) {
     res.status(500).json({ error: "Server error during profile update." });
+  }
+});
+
+// 🚨 THE NUKE ROUTE: Completely erases a user and all their sessions
+app.delete('/users/delete-account', requireAuth, async (req, res) => {
+  try {
+    const phone = req.user.phone; 
+
+    // 1. Delete the user's main profile
+    await User.findOneAndDelete({ phone });
+
+    // 2. Erase every single device session they have active
+    await Session.deleteMany({ phone });
+
+    // 3. Clear any floating OTPs they might have requested
+    const Otp = mongoose.model('Otp'); 
+    await Otp.deleteMany({ phone });
+
+    // 4. Delete any active rides they are driving
+    const Ride = mongoose.models.Ride;
+    if (Ride) {
+      await Ride.deleteMany({ driverPhone: phone });
+    }
+
+    res.status(200).json({ message: "Account permanently deleted." });
+  } catch (error) {
+    console.error("Error deleting account:", error);
+    res.status(500).json({ error: "Failed to delete account from server." });
   }
 });
 
@@ -320,7 +348,6 @@ app.post('/sessions/revoke-others', requireAuth, async (req, res) => {
 // ==========================================
 // 6. RIDE CREATION & SEARCH
 // ==========================================
-// 🚨 UPDATED: Now receives and saves `carUsed`
 app.post('/rides', requireAuth, async (req, res) => {
   try {
     const { route, date, time, seats, price, driverName, osrmPolyline, routeDistanceKm, carUsed } = req.body;
@@ -416,7 +443,6 @@ app.post('/requests/respond', requireAuth, async (req, res) => {
       const autoMessage = new Message({ senderId: request.driverPhone, receiverId: request.passengerPhone, text: "Ride confirmed! You can now chat here to coordinate pickup." });
       await autoMessage.save();
 
-      // 🚨 UPDATED: Pulling the car info from the ride itself, not the general driver profile
       io.to(request.passengerPhone).emit('ride_request_result', {
         status: 'accepted', 
         rideId: request.rideId, 
@@ -612,7 +638,6 @@ app.post('/rides/cancel-active', requireAuth, async (req, res) => {
     let notifText = "";
     let receiverPhone = role === 'driver' ? passengerPhone : ride.driverPhone;
 
-    // 🚨 UPDATED: Pull car details directly from the specific ride
     if (role === 'driver') {
       const carInfo = ride.carUsed ? `${ride.carUsed.carModel} (${ride.carUsed.carRegistration})` : 'Driver';
       notifText = `SYSTEM MESSAGE: Your ride has been cancelled by ${canceller.name} [${carInfo}].\nMessage from driver: "${compensationMsg}"`;
