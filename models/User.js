@@ -6,11 +6,11 @@ const userSchema = new mongoose.Schema({
   phone: { type: String, required: true, unique: true }, 
   
   // EMAIL DETAILS (Optional & Updatable)
-  email: { type: String, default: "" }, // No longer 'unique: true' to avoid empty string conflicts
+  email: { type: String, default: "" }, 
   isEmailVerified: { type: Boolean, default: false },
-  altEmail: { type: String, default: "" },    // 🔥 MATCHES FRONTEND: altEmail
+  altEmail: { type: String, default: "" }, 
   
-  // EMERGENCY CONTACTS (Matches edit-profile.tsx)
+  // EMERGENCY CONTACTS
   emgName1: { type: String, default: "" }, 
   emgPhone1: { type: String, default: "" },
   emgName2: { type: String, default: "" }, 
@@ -22,9 +22,16 @@ const userSchema = new mongoose.Schema({
   
   // DRIVER VERIFICATION
   isDriverVerified: { type: Boolean, default: false },   
-  carModel: { type: String, default: "" },
-  carRegistration: { type: String, default: "" },
-  drivingLicense: { type: String, default: "" }
+  drivingLicense: { type: String, default: "" },
+  
+  // THE NEW MULTI-CAR ARRAY
+  cars: [
+    {
+      carModel: { type: String },
+      carRegistration: { type: String },
+      mileage: { type: String }
+    }
+  ]
 }, { 
   timestamps: true 
 });
