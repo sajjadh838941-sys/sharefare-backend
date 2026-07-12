@@ -24,12 +24,18 @@ const userSchema = new mongoose.Schema({
   isDriverVerified: { type: Boolean, default: false },   
   drivingLicense: { type: String, default: "" },
   
+  // 🚨 NEW: DL Image Base64 Strings
+  dlImageFront: { type: String, default: "" },
+  dlImageBack: { type: String, default: "" },
+  
   // THE NEW MULTI-CAR ARRAY
   cars: [
     {
       carModel: { type: String },
       carRegistration: { type: String },
-      mileage: { type: String }
+      mileage: { type: String },
+      // 🚨 NEW: RC Image Base64 String for each specific car
+      rcImage: { type: String, default: "" }
     }
   ]
 }, { 
