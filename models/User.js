@@ -5,6 +5,9 @@ const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
   phone: { type: String, required: true, unique: true }, 
   
+  // 🚨 NEW: Instagram-style Profile Picture (Base64 String)
+  profilePicture: { type: String, default: "" },
+  
   // EMAIL DETAILS (Optional & Updatable)
   email: { type: String, default: "" }, 
   isEmailVerified: { type: Boolean, default: false },
@@ -24,7 +27,7 @@ const userSchema = new mongoose.Schema({
   isDriverVerified: { type: Boolean, default: false },   
   drivingLicense: { type: String, default: "" },
   
-  // 🚨 NEW: DL Image Base64 Strings
+  // DL Image Base64 Strings
   dlImageFront: { type: String, default: "" },
   dlImageBack: { type: String, default: "" },
   
@@ -34,7 +37,6 @@ const userSchema = new mongoose.Schema({
       carModel: { type: String },
       carRegistration: { type: String },
       mileage: { type: String },
-      // 🚨 NEW: RC Image Base64 String for each specific car
       rcImage: { type: String, default: "" }
     }
   ]
