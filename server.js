@@ -215,6 +215,32 @@ app.put('/users/update-profile', requireAuth, async (req, res) => {
   }
 });
 
+// 🚨 NEW: INSTAGRAM-STYLE PROFILE PICTURE UPLOAD ROUTE
+app.post('/users/update-avatar', requireAuth, async (req, res) => {
+  try {
+    const { profilePicture } = req.body;
+    const phone = req.user.phone; 
+
+    const user = await User.findOne({ phone });
+    if (!user) return res.status(404).json({ error: "User not found." });
+
+    // If profilePicture is null/empty, it deletes their current photo.
+    // If it contains a Base64 string, it saves the new photo.
+    user.profilePicture = profilePicture || "";
+    
+    await user.save();
+    
+    res.status(200).json({ 
+      success: true, 
+      user, 
+      message: profilePicture ? "Profile picture updated!" : "Profile picture removed." 
+    });
+  } catch (error) {
+    console.error("Avatar Upload Error:", error);
+    res.status(500).json({ error: "Server error during avatar upload." });
+  }
+});
+
 // 🚨 THE NUKE ROUTE: Completely erases a user and all their sessions
 app.delete('/users/delete-account', requireAuth, async (req, res) => {
   try {
