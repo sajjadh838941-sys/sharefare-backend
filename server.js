@@ -402,6 +402,20 @@ app.get('/rides/search', async (req, res) => {
   }
 });
 
+// 🚨 NEW: FETCH SINGLE RIDE FOR BACKGROUND MAP LOAD
+app.get('/rides/:id', async (req, res) => {
+  try {
+    const ride = await Ride.findById(req.params.id);
+    if (!ride) {
+      return res.status(404).json({ error: 'Ride not found' });
+    }
+    res.json(ride);
+  } catch (error) {
+    console.error("Error fetching single ride:", error);
+    res.status(500).json({ error: 'Failed to fetch ride details' });
+  }
+});
+
 // ==========================================
 // 7. RIDE REQUESTS
 // ==========================================
