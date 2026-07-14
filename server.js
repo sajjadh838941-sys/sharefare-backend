@@ -95,7 +95,9 @@ const rideSchema = new mongoose.Schema({
   driverName: { type: String, required: true },
   driverPhone: { type: String, required: true },
   
-  // 🚨 NEW: Stores the exact car chosen for this specific ride
+  // 🚨 NEW: Stamping the avatar into the ride ticket for quick rendering!
+  driverAvatar: { type: String, default: "" }, 
+
   carUsed: {
     carModel: { type: String },
     carRegistration: { type: String },
@@ -171,7 +173,6 @@ app.get('/users/phone/:phone', async (req, res) => {
   }
 });
 
-// 🚨 SECURED & UPDATED FOR MULTIPLE CARS
 app.post('/users/verify-driver', requireAuth, async (req, res) => {
   try {
     const { dlNumber, cars } = req.body; 
@@ -215,7 +216,6 @@ app.put('/users/update-profile', requireAuth, async (req, res) => {
   }
 });
 
-// 🚨 NEW: INSTAGRAM-STYLE PROFILE PICTURE UPLOAD ROUTE
 app.post('/users/update-avatar', requireAuth, async (req, res) => {
   try {
     const { profilePicture } = req.body;
@@ -224,10 +224,7 @@ app.post('/users/update-avatar', requireAuth, async (req, res) => {
     const user = await User.findOne({ phone });
     if (!user) return res.status(404).json({ error: "User not found." });
 
-    // If profilePicture is null/empty, it deletes their current photo.
-    // If it contains a Base64 string, it saves the new photo.
     user.profilePicture = profilePicture || "";
-    
     await user.save();
     
     res.status(200).json({ 
@@ -241,22 +238,14 @@ app.post('/users/update-avatar', requireAuth, async (req, res) => {
   }
 });
 
-// 🚨 THE NUKE ROUTE: Completely erases a user and all their sessions
 app.delete('/users/delete-account', requireAuth, async (req, res) => {
   try {
     const phone = req.user.phone; 
-
-    // 1. Delete the user's main profile
     await User.findOneAndDelete({ phone });
-
-    // 2. Erase every single device session they have active
     await Session.deleteMany({ phone });
-
-    // 3. Clear any floating OTPs they might have requested
     const Otp = mongoose.model('Otp'); 
     await Otp.deleteMany({ phone });
 
-    // 4. Delete any active rides they are driving
     const Ride = mongoose.models.Ride;
     if (Ride) {
       await Ride.deleteMany({ driverPhone: phone });
@@ -379,8 +368,13 @@ app.post('/rides', requireAuth, async (req, res) => {
     const { route, date, time, seats, price, driverName, osrmPolyline, routeDistanceKm, carUsed } = req.body;
     const driverPhone = req.user.phone; 
 
+    // 🚨 THE AVATAR INJECTION: Fetch the driver's full profile to pull their Avatar
+    const driverProfile = await User.findOne({ phone: driverPhone });
+    const driverAvatar = driverProfile?.profilePicture || "";
+
     const newRide = new Ride({ 
       route, date, time, seats, price, driverName, driverPhone,
+      driverAvatar, // Automatically stamped here
       osrmPolyline, routeDistanceKm, carUsed 
     });
     
@@ -402,7 +396,6 @@ app.get('/rides/search', async (req, res) => {
   }
 });
 
-// 🚨 NEW: FETCH SINGLE RIDE FOR BACKGROUND MAP LOAD
 app.get('/rides/:id', async (req, res) => {
   try {
     const ride = await Ride.findById(req.params.id);
