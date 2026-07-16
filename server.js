@@ -125,6 +125,12 @@ const requestSchema = new mongoose.Schema({
   passengerName: String,
   driverPhone: String,    
   seatsRequested: { type: Number, default: 1 }, 
+
+  // 🚨 NEW: Capture passenger's specific Micro-Transit route 
+  subRouteStart: { type: String, default: null },
+  subRouteEnd: { type: String, default: null },
+  offeredPrice: { type: Number, default: null },
+
   status: { type: String, default: 'pending' }, 
   createdAt: { type: Date, default: Date.now } 
 });
@@ -412,9 +418,11 @@ app.get('/rides/:id', async (req, res) => {
 // ==========================================
 // 7. RIDE REQUESTS
 // ==========================================
+// ==========================================
 app.post('/requests/send', requireAuth, async (req, res) => {
   try {
-    const { rideId, passengerName, driverPhone, seatsRequested } = req.body;
+    // 🚨 UPDATED: Destructure the new sub-route fields from req.body
+    const { rideId, passengerName, driverPhone, seatsRequested, subRouteStart, subRouteEnd, offeredPrice } = req.body;
     const passengerPhone = req.user.phone; 
 
     const isBlocked = await Cooldown.findOne({ passengerPhone, driverPhone });
@@ -423,12 +431,24 @@ app.post('/requests/send', requireAuth, async (req, res) => {
     const existing = await RideRequest.findOne({ rideId, passengerPhone, status: 'pending' });
     if (existing) return res.status(400).json({ error: "You already requested this ride!" });
 
-    const newRequest = new RideRequest({ rideId, passengerPhone, passengerName, driverPhone, seatsRequested: seatsRequested || 1 });
+    // 🚨 UPDATED: Save the Micro-Transit context to the database
+    const newRequest = new RideRequest({ 
+      rideId, 
+      passengerPhone, 
+      passengerName, 
+      driverPhone, 
+      seatsRequested: seatsRequested || 1,
+      subRouteStart, 
+      subRouteEnd, 
+      offeredPrice 
+    });
+    
     await newRequest.save();
 
     io.to(driverPhone).emit('new_request_inbox');
     res.status(200).json({ message: "Request sent to driver!" });
   } catch (error) {
+    console.error("Failed to send request:", error);
     res.status(500).json({ error: "Failed to send request." });
   }
 });
