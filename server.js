@@ -15,7 +15,10 @@ const Message = require('./models/Messages');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+
+// 🚨 THE FIX: Increased Payload Limit to 50MB for Base64 Image Uploads
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
@@ -95,13 +98,13 @@ const rideSchema = new mongoose.Schema({
   driverName: { type: String, required: true },
   driverPhone: { type: String, required: true },
   
-  // 🚨 NEW: Stamping the avatar into the ride ticket for quick rendering!
   driverAvatar: { type: String, default: "" }, 
 
   carUsed: {
     carModel: { type: String },
     carRegistration: { type: String },
-    mileage: { type: String }
+    mileage: { type: String },
+    rcImage: { type: String, default: "" } // Ensure RC images can be nested if passed this way
   },
 
   passengers: { type: [String], default: [] },
@@ -126,7 +129,6 @@ const requestSchema = new mongoose.Schema({
   driverPhone: String,    
   seatsRequested: { type: Number, default: 1 }, 
 
-  // 🚨 NEW: Capture passenger's specific Micro-Transit route 
   subRouteStart: { type: String, default: null },
   subRouteEnd: { type: String, default: null },
   offeredPrice: { type: Number, default: null },
@@ -181,19 +183,26 @@ app.get('/users/phone/:phone', async (req, res) => {
 
 app.post('/users/verify-driver', requireAuth, async (req, res) => {
   try {
-    const { dlNumber, cars } = req.body; 
+    // 🚨 THE FIX: Extracting image data from the request body
+    const { dlNumber, dlImageFront, dlImageBack, cars } = req.body; 
     const phone = req.user.phone; 
 
     const user = await User.findOne({ phone });
     if (!user) return res.status(404).json({ error: "User not found." });
 
     user.drivingLicense = dlNumber; 
+    
+    // 🚨 THE FIX: Saving the images to the database
+    if (dlImageFront) user.dlImageFront = dlImageFront;
+    if (dlImageBack) user.dlImageBack = dlImageBack;
+
     user.cars = cars; 
     user.isDriverVerified = true;
 
     await user.save();
     res.status(200).json({ success: true, user, message: "Driver verified successfully!" });
   } catch (error) {
+    console.error("Verification Error:", error);
     res.status(500).json({ error: "Server error during verification." });
   }
 });
@@ -374,13 +383,12 @@ app.post('/rides', requireAuth, async (req, res) => {
     const { route, date, time, seats, price, driverName, osrmPolyline, routeDistanceKm, carUsed } = req.body;
     const driverPhone = req.user.phone; 
 
-    // 🚨 THE AVATAR INJECTION: Fetch the driver's full profile to pull their Avatar
     const driverProfile = await User.findOne({ phone: driverPhone });
     const driverAvatar = driverProfile?.profilePicture || "";
 
     const newRide = new Ride({ 
       route, date, time, seats, price, driverName, driverPhone,
-      driverAvatar, // Automatically stamped here
+      driverAvatar, 
       osrmPolyline, routeDistanceKm, carUsed 
     });
     
@@ -418,10 +426,8 @@ app.get('/rides/:id', async (req, res) => {
 // ==========================================
 // 7. RIDE REQUESTS
 // ==========================================
-// ==========================================
 app.post('/requests/send', requireAuth, async (req, res) => {
   try {
-    // 🚨 UPDATED: Destructure the new sub-route fields from req.body
     const { rideId, passengerName, driverPhone, seatsRequested, subRouteStart, subRouteEnd, offeredPrice } = req.body;
     const passengerPhone = req.user.phone; 
 
@@ -431,7 +437,6 @@ app.post('/requests/send', requireAuth, async (req, res) => {
     const existing = await RideRequest.findOne({ rideId, passengerPhone, status: 'pending' });
     if (existing) return res.status(400).json({ error: "You already requested this ride!" });
 
-    // 🚨 UPDATED: Save the Micro-Transit context to the database
     const newRequest = new RideRequest({ 
       rideId, 
       passengerPhone, 
