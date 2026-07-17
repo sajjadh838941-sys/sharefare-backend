@@ -383,6 +383,19 @@ app.post('/rides', requireAuth, async (req, res) => {
     const { route, date, time, seats, price, driverName, osrmPolyline, routeDistanceKm, carUsed } = req.body;
     const driverPhone = req.user.phone; 
 
+    // 🚨 THE FIX: 4 Rides Per Day Limit Lock
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const todayRideCount = await Ride.countDocuments({
+      driverPhone: driverPhone,
+      createdAt: { $gte: startOfToday }
+    });
+
+    if (todayRideCount >= 4) {
+      return res.status(429).json({ message: "Daily limit reached! You can only post up to 4 rides per day." });
+    }
+
     const driverProfile = await User.findOne({ phone: driverPhone });
     const driverAvatar = driverProfile?.profilePicture || "";
 
