@@ -8,7 +8,10 @@ const http = require('http');
 const { Server } = require('socket.io');
 const crypto = require('crypto'); 
 
-// 🚨 NEW: EXPO SDK IMPORTS
+// 🚨 NEW: SECURITY IMPORTS
+const rateLimit = require('express-rate-limit');
+const mongoSanitize = require('express-mongo-sanitize');
+
 const { Expo } = require('expo-server-sdk');
 let expo = new Expo();
 
@@ -19,6 +22,20 @@ const Message = require('./models/Messages');
 
 const app = express();
 app.use(cors());
+
+// ==========================================
+// 🚨 STEP 1: SECURITY & ABUSE PREVENTION 🚨
+// ==========================================
+// 1A. Rate Limiting: Blocks IP if they spam more than 500 requests in 15 mins
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, 
+  max: 500, 
+  message: { error: "Too many requests, please try again later. - Security System" }
+});
+app.use(globalLimiter);
+
+// 1B. Input Sanitization: Strips out malicious MongoDB operators ($ and .)
+app.use(mongoSanitize());
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -56,14 +73,14 @@ const sessionSchema = new mongoose.Schema({
   deviceName: { type: String, default: 'Unknown Device' },
   os: { type: String, default: 'web' },
   location: { type: String, default: 'Assam, India' }, 
-  expoPushToken: { type: String, default: null }, // 🚨 NEW: Stores the device's Push Token
+  expoPushToken: { type: String, default: null }, 
   lastActive: { type: Date, default: Date.now },
   createdAt: { type: Date, default: Date.now }
 });
 const Session = mongoose.model('Session', sessionSchema);
 
 // ==========================================
-// 🚨 NEW: EXPO PUSH NOTIFICATION HELPER
+// EXPO PUSH NOTIFICATION HELPER
 // ==========================================
 const sendPush = async (phone, title, body, data = {}) => {
   try {
@@ -153,6 +170,12 @@ const rideSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
+
+// 🚨 STEP 3: DATABASE OPTIMIZATION INDEXES 🚨
+// These ensure searches take milliseconds instead of seconds as the database grows
+rideSchema.index({ date: 1, seats: 1 }); 
+rideSchema.index({ driverPhone: 1, status: 1 });
+
 const Ride = mongoose.models.Ride || mongoose.model('Ride', rideSchema);
 
 const requestSchema = new mongoose.Schema({
@@ -252,7 +275,6 @@ app.get('/users/phone/:phone', async (req, res) => {
   }
 });
 
-// 🚨 NEW: ROUTE TO SAVE EXPO PUSH TOKEN FROM FRONTEND
 app.post('/users/save-push-token', requireAuth, async (req, res) => {
   try {
     const { pushToken } = req.body;
@@ -542,7 +564,6 @@ app.post('/requests/send', requireAuth, async (req, res) => {
 
     io.to(driverPhone).emit('new_request_inbox');
     
-    // 🚨 NEW: Trigger Push Notification
     sendPush(driverPhone, "New Ride Request! 🚗", `${passengerName} requested ${seatsRequested || 1} seat(s) on your ride.`);
 
     res.status(200).json({ message: "Request sent to driver!" });
@@ -578,7 +599,6 @@ app.post('/requests/respond', requireAuth, async (req, res) => {
       
       io.to(request.passengerPhone).emit('ride_request_result', { status: 'denied', rideId: request.rideId });
       
-      // 🚨 NEW: Trigger Push Notification
       sendPush(request.passengerPhone, "Ride Update", "The driver declined your request.");
 
       return res.status(200).json({ message: "Request denied." });
@@ -603,7 +623,6 @@ app.post('/requests/respond', requireAuth, async (req, res) => {
         status: 'accepted', rideId: request.rideId, driverPhone: request.driverPhone, driverName: driver.name, carModel: ride.carUsed?.carModel || 'Unknown', carRegistration: ride.carUsed?.carRegistration || 'Unknown'
       });
       
-      // 🚨 NEW: Trigger Push Notification
       sendPush(request.passengerPhone, "Ride Confirmed! 🎉", `${driver.name} accepted your ride request.`);
 
       return res.status(200).json({ message: "Ride accepted and request deleted!" });
@@ -665,7 +684,6 @@ app.post('/rides/complete-passenger', async (req, res) => {
     io.to(passengerPhone).emit('receive_message', msgToPassenger);
     io.to(ride.driverPhone).emit('receive_message', msgToDriver);
 
-    // 🚨 NEW: Trigger Push Notifications
     sendPush(passengerPhone, "Payment Successful ✅", `You paid INR ${totalPaidByPassenger} for your ride.`);
     sendPush(ride.driverPhone, "Payment Received 💸", `You earned INR ${driverEarnings} (Platform fee deducted).`);
 
@@ -692,7 +710,6 @@ app.post('/messages', requireAuth, async (req, res) => {
     const newMessage = new Message({ senderId, receiverId, text });
     await newMessage.save();
 
-    // 🚨 NEW: Trigger Push Notification
     sendPush(receiverId, "New Message 💬", text);
 
     res.status(201).json({ message: "Message sent!", data: newMessage });
@@ -796,7 +813,6 @@ app.post('/rides/cancel-active', requireAuth, async (req, res) => {
     });
     io.to(receiverPhone).emit('receive_message', sysMessage);
 
-    // 🚨 NEW: Trigger Push Notification
     sendPush(receiverPhone, "Ride Cancelled ⚠️", role === 'driver' ? "The driver has cancelled the trip." : "A passenger has cancelled their seat.");
 
     res.status(200).json({ message: "Cancellation processed!" });
