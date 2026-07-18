@@ -766,7 +766,7 @@ app.get('/rides/history/:phone', async (req, res) => {
           
           if (hasPassengers && hoursPassed >= 24) {
             isExpired = true; 
-          } else if (!hasPassengers && hoursPassed >= 48) {
+          } else if (!hasPassengers && hoursPassed >= 24) {
             isExpired = true; 
           }
 
