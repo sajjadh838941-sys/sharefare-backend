@@ -8,6 +8,10 @@ const http = require('http');
 const { Server } = require('socket.io');
 const crypto = require('crypto'); 
 
+// 🚨 NEW: EXPO SDK IMPORTS
+const { Expo } = require('expo-server-sdk');
+let expo = new Expo();
+
 const resend = new Resend(process.env.RESEND_API_KEY); 
 
 const User = require('./models/User');
@@ -52,10 +56,41 @@ const sessionSchema = new mongoose.Schema({
   deviceName: { type: String, default: 'Unknown Device' },
   os: { type: String, default: 'web' },
   location: { type: String, default: 'Assam, India' }, 
+  expoPushToken: { type: String, default: null }, // 🚨 NEW: Stores the device's Push Token
   lastActive: { type: Date, default: Date.now },
   createdAt: { type: Date, default: Date.now }
 });
 const Session = mongoose.model('Session', sessionSchema);
+
+// ==========================================
+// 🚨 NEW: EXPO PUSH NOTIFICATION HELPER
+// ==========================================
+const sendPush = async (phone, title, body, data = {}) => {
+  try {
+    const sessions = await Session.find({ phone: phone, expoPushToken: { $ne: null } });
+    let messages = [];
+
+    for (let session of sessions) {
+      if (!Expo.isExpoPushToken(session.expoPushToken)) continue;
+      messages.push({
+        to: session.expoPushToken,
+        sound: 'default',
+        title: title,
+        body: body,
+        data: data,
+      });
+    }
+
+    if (messages.length > 0) {
+      let chunks = expo.chunkPushNotifications(messages);
+      for (let chunk of chunks) {
+        await expo.sendPushNotificationsAsync(chunk);
+      }
+    }
+  } catch (error) {
+    console.error("Push Notification Error:", error);
+  }
+};
 
 // ==========================================
 // 🚀 0.9. SECURITY MIDDLEWARE (THE BOUNCER)
@@ -214,6 +249,18 @@ app.get('/users/phone/:phone', async (req, res) => {
     res.status(200).json({ user });
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch user by phone" });
+  }
+});
+
+// 🚨 NEW: ROUTE TO SAVE EXPO PUSH TOKEN FROM FRONTEND
+app.post('/users/save-push-token', requireAuth, async (req, res) => {
+  try {
+    const { pushToken } = req.body;
+    const sessionToken = req.user.token;
+    await Session.findOneAndUpdate({ sessionToken }, { expoPushToken: pushToken });
+    res.status(200).json({ message: "Push token saved successfully!" });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to save push token." });
   }
 });
 
@@ -494,6 +541,10 @@ app.post('/requests/send', requireAuth, async (req, res) => {
     await newRequest.save();
 
     io.to(driverPhone).emit('new_request_inbox');
+    
+    // 🚨 NEW: Trigger Push Notification
+    sendPush(driverPhone, "New Ride Request! 🚗", `${passengerName} requested ${seatsRequested || 1} seat(s) on your ride.`);
+
     res.status(200).json({ message: "Request sent to driver!" });
   } catch (error) {
     res.status(500).json({ error: "Failed to send request." });
@@ -524,7 +575,12 @@ app.post('/requests/respond', requireAuth, async (req, res) => {
       await request.save();
       const newCooldown = new Cooldown({ passengerPhone: request.passengerPhone, driverPhone: request.driverPhone });
       await newCooldown.save();
+      
       io.to(request.passengerPhone).emit('ride_request_result', { status: 'denied', rideId: request.rideId });
+      
+      // 🚨 NEW: Trigger Push Notification
+      sendPush(request.passengerPhone, "Ride Update", "The driver declined your request.");
+
       return res.status(200).json({ message: "Request denied." });
     }
 
@@ -546,6 +602,10 @@ app.post('/requests/respond', requireAuth, async (req, res) => {
       io.to(request.passengerPhone).emit('ride_request_result', {
         status: 'accepted', rideId: request.rideId, driverPhone: request.driverPhone, driverName: driver.name, carModel: ride.carUsed?.carModel || 'Unknown', carRegistration: ride.carUsed?.carRegistration || 'Unknown'
       });
+      
+      // 🚨 NEW: Trigger Push Notification
+      sendPush(request.passengerPhone, "Ride Confirmed! 🎉", `${driver.name} accepted your ride request.`);
+
       return res.status(200).json({ message: "Ride accepted and request deleted!" });
     }
   } catch (error) {
@@ -566,7 +626,6 @@ app.post('/rides/request-payment-confirmation', async (req, res) => {
   }
 });
 
-// 🚨 UPDATED: THE 15% PLATFORM CUT ALGORITHM 
 app.post('/rides/complete-passenger', async (req, res) => {
   try {
     const { rideId, passengerPhone } = req.body;
@@ -583,12 +642,10 @@ app.post('/rides/complete-passenger', async (req, res) => {
     if (allDone) { ride.status = 'completed'; }
     await ride.save();
 
-    // The Math
     const totalPaidByPassenger = ride.price; 
-    const platformFee = Math.round(totalPaidByPassenger * 0.15); // Platform takes 15%
-    const driverEarnings = totalPaidByPassenger - platformFee;   // Driver gets 85%
+    const platformFee = Math.round(totalPaidByPassenger * 0.15); 
+    const driverEarnings = totalPaidByPassenger - platformFee;   
 
-    // Message to Passenger (They only see the full price they paid)
     const msgToPassenger = new Message({ 
       senderId: ride.driverPhone, 
       receiverId: passengerPhone, 
@@ -596,7 +653,6 @@ app.post('/rides/complete-passenger', async (req, res) => {
     });
     await msgToPassenger.save();
 
-    // Message to Driver (They see their exact cut and the platform deduction)
     const msgToDriver = new Message({ 
       senderId: passengerPhone, 
       receiverId: ride.driverPhone, 
@@ -608,6 +664,10 @@ app.post('/rides/complete-passenger', async (req, res) => {
     io.to(ride.driverPhone).emit('payment_completed_success', { rideId, passengerPhone });
     io.to(passengerPhone).emit('receive_message', msgToPassenger);
     io.to(ride.driverPhone).emit('receive_message', msgToDriver);
+
+    // 🚨 NEW: Trigger Push Notifications
+    sendPush(passengerPhone, "Payment Successful ✅", `You paid INR ${totalPaidByPassenger} for your ride.`);
+    sendPush(ride.driverPhone, "Payment Received 💸", `You earned INR ${driverEarnings} (Platform fee deducted).`);
 
     if (allDone) io.to(ride.driverPhone).emit('ride_fully_completed', { rideId });
     res.status(200).json({ message: "Passenger marked as complete!", allDone });
@@ -631,6 +691,10 @@ app.post('/messages', requireAuth, async (req, res) => {
 
     const newMessage = new Message({ senderId, receiverId, text });
     await newMessage.save();
+
+    // 🚨 NEW: Trigger Push Notification
+    sendPush(receiverId, "New Message 💬", text);
+
     res.status(201).json({ message: "Message sent!", data: newMessage });
   } catch (error) {
     res.status(500).json({ error: "Failed to send message." });
@@ -731,6 +795,9 @@ app.post('/rides/cancel-active', requireAuth, async (req, res) => {
       carDetails: ride.carUsed ? `${ride.carUsed.carModel} (${ride.carUsed.carRegistration})` : '' 
     });
     io.to(receiverPhone).emit('receive_message', sysMessage);
+
+    // 🚨 NEW: Trigger Push Notification
+    sendPush(receiverPhone, "Ride Cancelled ⚠️", role === 'driver' ? "The driver has cancelled the trip." : "A passenger has cancelled their seat.");
 
     res.status(200).json({ message: "Cancellation processed!" });
   } catch (error) {
