@@ -16,7 +16,6 @@ const Message = require('./models/Messages');
 const app = express();
 app.use(cors());
 
-// 🚨 THE FIX: Increased Payload Limit to 50MB for Base64 Image Uploads
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -121,7 +120,6 @@ const rideSchema = new mongoose.Schema({
 });
 const Ride = mongoose.models.Ride || mongoose.model('Ride', rideSchema);
 
-
 const requestSchema = new mongoose.Schema({
   rideId: String,
   passengerPhone: String, 
@@ -139,15 +137,15 @@ const requestSchema = new mongoose.Schema({
 const RideRequest = mongoose.model('RideRequest', requestSchema);
 
 // ==========================================
-// 1.5. 🚨 NEW: RATINGS DATABASE
+// 1.5. COLD STORAGE: RATINGS DATABASE
 // ==========================================
 const ratingSchema = new mongoose.Schema({
   rideId: { type: String, required: true },
   reviewerPhone: { type: String, required: true },
   targetPhone: { type: String, required: true },
-  role: { type: String, required: true }, // 'driver' or 'passenger'
+  role: { type: String, required: true }, 
   rating: { type: Number, required: true, min: 1, max: 5 },
-  womenSafetyRating: { type: Number, default: 0 }, // 0 means not rated for this specifically
+  womenSafetyRating: { type: Number, default: 0 },
   reviewText: { type: String, default: "" },
   createdAt: { type: Date, default: Date.now }
 });
@@ -164,7 +162,7 @@ const cooldownSchema = new mongoose.Schema({
 const Cooldown = mongoose.model('Cooldown', cooldownSchema);
 
 // ==========================================
-// 3. COLD STORAGE: EXPIRED RIDES DATABASE
+// 3. EXPIRED RIDES DATABASE
 // ==========================================
 const expiredRideSchema = new mongoose.Schema({
   originalRideId: String, 
@@ -176,39 +174,23 @@ const ExpiredRide = mongoose.model('ExpiredRide', expiredRideSchema);
 // ==========================================
 // 4. USER FETCHING & UPDATING ROUTES
 // ==========================================
-
-// 🚨 SECURE PUBLIC PROFILE FETCHING (Includes calculated Ratings)
 app.get('/users/public/:phone', async (req, res) => {
   try {
     const user = await User.findOne({ phone: req.params.phone });
     if (!user) return res.status(404).json({ error: "User not found" });
 
-    const ratings = await Rating.find({ targetPhone: req.params.phone });
-    let totalRating = 0;
-    let totalWomenSafety = 0;
-    let womenSafetyCount = 0;
+    const avgRating = user.totalRatings > 0 ? user.rating.toFixed(1) : "New";
+    const avgWomenSafety = user.womenSafetyCount > 0 ? user.womenSafetyRating.toFixed(1) : "N/A";
 
-    ratings.forEach(r => {
-      totalRating += r.rating;
-      if (r.womenSafetyRating > 0) {
-        totalWomenSafety += r.womenSafetyRating;
-        womenSafetyCount++;
-      }
-    });
-
-    const avgRating = ratings.length > 0 ? (totalRating / ratings.length).toFixed(1) : "New";
-    const avgWomenSafety = womenSafetyCount > 0 ? (totalWomenSafety / womenSafetyCount).toFixed(1) : "N/A";
-
-    // ONLY return safe, public fields!
     res.status(200).json({ 
       name: user.name,
       profilePicture: user.profilePicture || "",
       isDriverVerified: user.isDriverVerified,
       createdAt: user.createdAt || new Date(),
       avgRating,
-      totalRatings: ratings.length,
+      totalRatings: user.totalRatings,
       avgWomenSafety,
-      womenSafetyCount
+      womenSafetyCount: user.womenSafetyCount
     });
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch public profile" });
@@ -253,7 +235,6 @@ app.post('/users/verify-driver', requireAuth, async (req, res) => {
     await user.save();
     res.status(200).json({ success: true, user, message: "Driver verified successfully!" });
   } catch (error) {
-    console.error("Verification Error:", error);
     res.status(500).json({ error: "Server error during verification." });
   }
 });
@@ -299,7 +280,6 @@ app.post('/users/update-avatar', requireAuth, async (req, res) => {
       message: profilePicture ? "Profile picture updated!" : "Profile picture removed." 
     });
   } catch (error) {
-    console.error("Avatar Upload Error:", error);
     res.status(500).json({ error: "Server error during avatar upload." });
   }
 });
@@ -319,7 +299,6 @@ app.delete('/users/delete-account', requireAuth, async (req, res) => {
 
     res.status(200).json({ message: "Account permanently deleted." });
   } catch (error) {
-    console.error("Error deleting account:", error);
     res.status(500).json({ error: "Failed to delete account from server." });
   }
 });
@@ -348,10 +327,7 @@ app.post('/auth/request-email-otp', async (req, res) => {
         to: email, 
         subject: 'Your ShareFare Axom Verification Code',
         template: { id: 'email-verification', variables: { OTP_CODE: generatedOtp } }
-      }).then(() => console.log(`✅ HTTP Template Email Sent Successfully via Resend!`))
-        .catch(err => console.log("❌ Resend API Error:", err));
-    } else {
-      console.log(`⚠️ RESEND_API_KEY Missing! Fallback OTP for ${email}: ${generatedOtp}`);
+      });
     }
   } catch (error) {
     if (!res.headersSent) res.status(500).json({ error: "Server error during OTP generation." });
@@ -434,8 +410,6 @@ app.post('/rides', requireAuth, async (req, res) => {
     const { route, date, time, seats, price, driverName, osrmPolyline, routeDistanceKm, carUsed } = req.body;
     const driverPhone = req.user.phone; 
 
-    // 🚨 UPDATED LOGIC: Prevent Driver from posting another active ride for the EXACT SAME route.
-    // If they swap the destination to origin (a return trip), it is allowed!
     if (route && route.length >= 2) {
       const duplicateActiveRide = await Ride.findOne({
         driverPhone: driverPhone,
@@ -473,7 +447,6 @@ app.post('/rides', requireAuth, async (req, res) => {
     await newRide.save();
     res.status(201).json({ message: "Ride posted successfully!", ride: newRide });
   } catch (error) {
-    console.error("Post Ride Error:", error);
     res.status(400).json({ error: "Failed to post ride" });
   }
 });
@@ -496,7 +469,6 @@ app.get('/rides/:id', async (req, res) => {
     }
     res.json(ride);
   } catch (error) {
-    console.error("Error fetching single ride:", error);
     res.status(500).json({ error: 'Failed to fetch ride details' });
   }
 });
@@ -516,14 +488,7 @@ app.post('/requests/send', requireAuth, async (req, res) => {
     if (existing) return res.status(400).json({ error: "You already requested this ride!" });
 
     const newRequest = new RideRequest({ 
-      rideId, 
-      passengerPhone, 
-      passengerName, 
-      driverPhone, 
-      seatsRequested: seatsRequested || 1,
-      subRouteStart, 
-      subRouteEnd, 
-      offeredPrice 
+      rideId, passengerPhone, passengerName, driverPhone, seatsRequested: seatsRequested || 1, subRouteStart, subRouteEnd, offeredPrice 
     });
     
     await newRequest.save();
@@ -531,7 +496,6 @@ app.post('/requests/send', requireAuth, async (req, res) => {
     io.to(driverPhone).emit('new_request_inbox');
     res.status(200).json({ message: "Request sent to driver!" });
   } catch (error) {
-    console.error("Failed to send request:", error);
     res.status(500).json({ error: "Failed to send request." });
   }
 });
@@ -580,12 +544,7 @@ app.post('/requests/respond', requireAuth, async (req, res) => {
       await autoMessage.save();
 
       io.to(request.passengerPhone).emit('ride_request_result', {
-        status: 'accepted', 
-        rideId: request.rideId, 
-        driverPhone: request.driverPhone, 
-        driverName: driver.name, 
-        carModel: ride.carUsed?.carModel || 'Unknown', 
-        carRegistration: ride.carUsed?.carRegistration || 'Unknown'
+        status: 'accepted', rideId: request.rideId, driverPhone: request.driverPhone, driverName: driver.name, carModel: ride.carUsed?.carModel || 'Unknown', carRegistration: ride.carUsed?.carRegistration || 'Unknown'
       });
       return res.status(200).json({ message: "Ride accepted and request deleted!" });
     }
@@ -607,26 +566,7 @@ app.post('/rides/request-payment-confirmation', async (req, res) => {
   }
 });
 
-app.post('/rides/request-ride-completion', async (req, res) => {
-  try {
-    const { rideId, requesterPhone, targetPhone, role } = req.body;
-    io.to(targetPhone).emit('ride_completion_requested', { rideId, requesterPhone, role });
-    res.status(200).json({ message: "Handshake sent to partner!" });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to send completion request." });
-  }
-});
-
-app.post('/rides/reject-ride-completion', async (req, res) => {
-  try {
-    const { rideId, targetPhone } = req.body;
-    io.to(targetPhone).emit('ride_completion_rejected', { rideId });
-    res.status(200).json({ message: "Rejection notification sent." });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to send rejection." });
-  }
-});
-
+// 🚨 UPDATED: THE 15% PLATFORM CUT ALGORITHM 
 app.post('/rides/complete-passenger', async (req, res) => {
   try {
     const { rideId, passengerPhone } = req.body;
@@ -643,13 +583,25 @@ app.post('/rides/complete-passenger', async (req, res) => {
     if (allDone) { ride.status = 'completed'; }
     await ride.save();
 
-    const driver = await User.findOne({ phone: ride.driverPhone });
-    const passenger = await User.findOne({ phone: passengerPhone });
+    // The Math
+    const totalPaidByPassenger = ride.price; 
+    const platformFee = Math.round(totalPaidByPassenger * 0.15); // Platform takes 15%
+    const driverEarnings = totalPaidByPassenger - platformFee;   // Driver gets 85%
 
-    const msgToPassenger = new Message({ senderId: ride.driverPhone, receiverId: passengerPhone, text: `Ride Complete! You paid INR ${ride.price} to ${driver?.name || 'your driver'}.` });
+    // Message to Passenger (They only see the full price they paid)
+    const msgToPassenger = new Message({ 
+      senderId: ride.driverPhone, 
+      receiverId: passengerPhone, 
+      text: `Ride Complete! You paid INR ${totalPaidByPassenger} securely via ShareFare.` 
+    });
     await msgToPassenger.save();
 
-    const msgToDriver = new Message({ senderId: passengerPhone, receiverId: ride.driverPhone, text: `Payment Confirmed! You received payment from ${passenger?.name || 'your passenger'}.` });
+    // Message to Driver (They see their exact cut and the platform deduction)
+    const msgToDriver = new Message({ 
+      senderId: passengerPhone, 
+      receiverId: ride.driverPhone, 
+      text: `Payment Confirmed! You earned INR ${driverEarnings} (Platform Fee: INR ${platformFee} automatically deducted). The amount will be settled to your registered bank account.` 
+    });
     await msgToDriver.save();
 
     io.to(passengerPhone).emit('payment_completed_success', { rideId, passengerPhone });
@@ -661,18 +613,6 @@ app.post('/rides/complete-passenger', async (req, res) => {
     res.status(200).json({ message: "Passenger marked as complete!", allDone });
   } catch (error) {
     res.status(500).json({ error: "Failed to update status." });
-  }
-});
-
-app.get('/rides/check-payment/:rideId/:passengerPhone', async (req, res) => {
-  try {
-    const { rideId, passengerPhone } = req.params;
-    const ride = await Ride.findById(rideId);
-    if (!ride) return res.status(404).json({ error: "Ride not found" });
-    const isPaid = ride.paidPassengers && ride.paidPassengers.includes(passengerPhone);
-    res.status(200).json({ isPaid });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to check payment." });
   }
 });
 
@@ -804,8 +744,6 @@ app.post('/rides/cancel-active', requireAuth, async (req, res) => {
 app.get('/rides/history/:phone', async (req, res) => {
   try {
     const { phone } = req.params;
-    
-    // 🚨 THE FIX: Get the start of today (Midnight)
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -815,13 +753,9 @@ app.get('/rides/history/:phone', async (req, res) => {
 
       for (let ride of ridesArray) {
         let r = ride.toObject ? ride.toObject() : ride;
-        
-        // 🚨 THE FIX: Parse the ride's date and see if it's strictly before today
         const rideDateObj = new Date(r.date);
         rideDateObj.setHours(0, 0, 0, 0);
         const isPastDate = rideDateObj < today;
-
-        const hasPassengers = r.passengers && r.passengers.length > 0;
 
         if (r.status === 'completed') {
           if (isPastDate) {
@@ -834,11 +768,7 @@ app.get('/rides/history/:phone', async (req, res) => {
           }
         } else {
           let isExpired = false;
-          
-          // 🚨 THE FIX: If the date has passed (yesterday or older), it expires instantly
-          if (isPastDate) {
-            isExpired = true; 
-          }
+          if (isPastDate) { isExpired = true; }
 
           if (isExpired) {
             const expiredDoc = new ExpiredRide({ ...r, status: 'expired', originalRideId: r._id });
@@ -899,22 +829,39 @@ app.get('/rides/history/:phone', async (req, res) => {
 });
 
 // ==========================================
-// 12. 🚨 NEW: SUBMIT RATINGS ROUTE
+// 12. SUBMIT RATINGS ROUTE (Hybrid Math)
 // ==========================================
 app.post('/ratings/submit', requireAuth, async (req, res) => {
   try {
     const { rideId, targetPhone, role, rating, womenSafetyRating, reviewText } = req.body;
     const reviewerPhone = req.user.phone;
 
-    // Prevent duplicate ratings for the same ride & user
     const existing = await Rating.findOne({ rideId, reviewerPhone, targetPhone });
     if (existing) return res.status(400).json({ error: "You already rated this user for this ride." });
 
     const newRating = new Rating({
       rideId, reviewerPhone, targetPhone, role, rating, womenSafetyRating, reviewText
     });
-    
     await newRating.save();
+
+    const targetUser = await User.findOne({ phone: targetPhone });
+    if (targetUser) {
+      const newTotalRatings = (targetUser.totalRatings || 0) + 1;
+      const newOverallAvg = (((targetUser.rating || 0) * (targetUser.totalRatings || 0)) + rating) / newTotalRatings;
+      
+      targetUser.rating = newOverallAvg;
+      targetUser.totalRatings = newTotalRatings;
+
+      if (womenSafetyRating > 0) {
+        const newWomenCount = (targetUser.womenSafetyCount || 0) + 1;
+        const newWomenAvg = (((targetUser.womenSafetyRating || 0) * (targetUser.womenSafetyCount || 0)) + womenSafetyRating) / newWomenCount;
+        
+        targetUser.womenSafetyRating = newWomenAvg;
+        targetUser.womenSafetyCount = newWomenCount;
+      }
+      await targetUser.save();
+    }
+
     res.status(200).json({ message: "Rating submitted successfully!" });
   } catch (error) {
     res.status(500).json({ error: "Failed to submit rating." });
