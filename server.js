@@ -764,9 +764,8 @@ app.get('/rides/history/:phone', async (req, res) => {
         } else {
           let isExpired = false;
           
-          if (hasPassengers && hoursPassed >= 24) {
-            isExpired = true; 
-          } else if (!hasPassengers && hoursPassed >= 24) {
+          // 🚨 THE FIX: All rides (empty or not) expire exactly 24 hours after scheduled time
+          if (hoursPassed >= 24) {
             isExpired = true; 
           }
 
