@@ -183,7 +183,6 @@ app.get('/users/phone/:phone', async (req, res) => {
 
 app.post('/users/verify-driver', requireAuth, async (req, res) => {
   try {
-    // 🚨 THE FIX: Extracting image data from the request body
     const { dlNumber, dlImageFront, dlImageBack, cars } = req.body; 
     const phone = req.user.phone; 
 
@@ -191,8 +190,6 @@ app.post('/users/verify-driver', requireAuth, async (req, res) => {
     if (!user) return res.status(404).json({ error: "User not found." });
 
     user.drivingLicense = dlNumber; 
-    
-    // 🚨 THE FIX: Saving the images to the database
     if (dlImageFront) user.dlImageFront = dlImageFront;
     if (dlImageBack) user.dlImageBack = dlImageBack;
 
@@ -383,7 +380,6 @@ app.post('/rides', requireAuth, async (req, res) => {
     const { route, date, time, seats, price, driverName, osrmPolyline, routeDistanceKm, carUsed } = req.body;
     const driverPhone = req.user.phone; 
 
-    // 🚨 THE FIX: 4 Rides Per Day Limit Lock
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
@@ -739,7 +735,10 @@ app.post('/rides/cancel-active', requireAuth, async (req, res) => {
 app.get('/rides/history/:phone', async (req, res) => {
   try {
     const { phone } = req.params;
-    const now = new Date();
+    
+    // 🚨 THE FIX: Get the start of today (Midnight)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
     const processAndMoveRides = async (ridesArray) => {
       const active = [];
@@ -747,13 +746,16 @@ app.get('/rides/history/:phone', async (req, res) => {
 
       for (let ride of ridesArray) {
         let r = ride.toObject ? ride.toObject() : ride;
-        const rideTime = new Date(`${r.date} ${r.time}`);
-        const hoursPassed = (now - rideTime) / (1000 * 60 * 60);
+        
+        // 🚨 THE FIX: Parse the ride's date and see if it's strictly before today
+        const rideDateObj = new Date(r.date);
+        rideDateObj.setHours(0, 0, 0, 0);
+        const isPastDate = rideDateObj < today;
 
         const hasPassengers = r.passengers && r.passengers.length > 0;
 
         if (r.status === 'completed') {
-          if (hoursPassed >= 24) {
+          if (isPastDate) {
             const expiredDoc = new ExpiredRide({ ...r, status: 'completed', originalRideId: r._id });
             await expiredDoc.save();
             await Ride.findByIdAndDelete(r._id);
@@ -764,8 +766,8 @@ app.get('/rides/history/:phone', async (req, res) => {
         } else {
           let isExpired = false;
           
-          // 🚨 THE FIX: All rides (empty or not) expire exactly 24 hours after scheduled time
-          if (hoursPassed >= 24) {
+          // 🚨 THE FIX: If the date has passed (yesterday or older), it expires instantly
+          if (isPastDate) {
             isExpired = true; 
           }
 
