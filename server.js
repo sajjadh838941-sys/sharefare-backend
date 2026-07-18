@@ -104,7 +104,7 @@ const rideSchema = new mongoose.Schema({
     carModel: { type: String },
     carRegistration: { type: String },
     mileage: { type: String },
-    rcImage: { type: String, default: "" } // Ensure RC images can be nested if passed this way
+    rcImage: { type: String, default: "" } 
   },
 
   passengers: { type: [String], default: [] },
@@ -139,6 +139,21 @@ const requestSchema = new mongoose.Schema({
 const RideRequest = mongoose.model('RideRequest', requestSchema);
 
 // ==========================================
+// 1.5. 🚨 NEW: RATINGS DATABASE
+// ==========================================
+const ratingSchema = new mongoose.Schema({
+  rideId: { type: String, required: true },
+  reviewerPhone: { type: String, required: true },
+  targetPhone: { type: String, required: true },
+  role: { type: String, required: true }, // 'driver' or 'passenger'
+  rating: { type: Number, required: true, min: 1, max: 5 },
+  womenSafetyRating: { type: Number, default: 0 }, // 0 means not rated for this specifically
+  reviewText: { type: String, default: "" },
+  createdAt: { type: Date, default: Date.now }
+});
+const Rating = mongoose.model('Rating', ratingSchema);
+
+// ==========================================
 // 2. THE 1-HOUR REJECTION COOLDOWN DATABASE
 // ==========================================
 const cooldownSchema = new mongoose.Schema({
@@ -161,6 +176,45 @@ const ExpiredRide = mongoose.model('ExpiredRide', expiredRideSchema);
 // ==========================================
 // 4. USER FETCHING & UPDATING ROUTES
 // ==========================================
+
+// 🚨 SECURE PUBLIC PROFILE FETCHING (Includes calculated Ratings)
+app.get('/users/public/:phone', async (req, res) => {
+  try {
+    const user = await User.findOne({ phone: req.params.phone });
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const ratings = await Rating.find({ targetPhone: req.params.phone });
+    let totalRating = 0;
+    let totalWomenSafety = 0;
+    let womenSafetyCount = 0;
+
+    ratings.forEach(r => {
+      totalRating += r.rating;
+      if (r.womenSafetyRating > 0) {
+        totalWomenSafety += r.womenSafetyRating;
+        womenSafetyCount++;
+      }
+    });
+
+    const avgRating = ratings.length > 0 ? (totalRating / ratings.length).toFixed(1) : "New";
+    const avgWomenSafety = womenSafetyCount > 0 ? (totalWomenSafety / womenSafetyCount).toFixed(1) : "N/A";
+
+    // ONLY return safe, public fields!
+    res.status(200).json({ 
+      name: user.name,
+      profilePicture: user.profilePicture || "",
+      isDriverVerified: user.isDriverVerified,
+      createdAt: user.createdAt || new Date(),
+      avgRating,
+      totalRatings: ratings.length,
+      avgWomenSafety,
+      womenSafetyCount
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch public profile" });
+  }
+});
+
 app.get('/users/email/:email', async (req, res) => {
   try {
     const user = await User.findOne({ email: req.params.email });
@@ -379,6 +433,21 @@ app.post('/rides', requireAuth, async (req, res) => {
   try {
     const { route, date, time, seats, price, driverName, osrmPolyline, routeDistanceKm, carUsed } = req.body;
     const driverPhone = req.user.phone; 
+
+    // 🚨 UPDATED LOGIC: Prevent Driver from posting another active ride for the EXACT SAME route.
+    // If they swap the destination to origin (a return trip), it is allowed!
+    if (route && route.length >= 2) {
+      const duplicateActiveRide = await Ride.findOne({
+        driverPhone: driverPhone,
+        status: 'active',
+        'route.0': route[0].trim(),
+        'route.1': route[route.length - 1].trim()
+      });
+
+      if (duplicateActiveRide) {
+        return res.status(400).json({ message: "You already have an active ride for this exact route! You can post a return trip (swapped locations) or a different destination." });
+      }
+    }
 
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
@@ -826,6 +895,29 @@ app.get('/rides/history/:phone', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch history." });
+  }
+});
+
+// ==========================================
+// 12. 🚨 NEW: SUBMIT RATINGS ROUTE
+// ==========================================
+app.post('/ratings/submit', requireAuth, async (req, res) => {
+  try {
+    const { rideId, targetPhone, role, rating, womenSafetyRating, reviewText } = req.body;
+    const reviewerPhone = req.user.phone;
+
+    // Prevent duplicate ratings for the same ride & user
+    const existing = await Rating.findOne({ rideId, reviewerPhone, targetPhone });
+    if (existing) return res.status(400).json({ error: "You already rated this user for this ride." });
+
+    const newRating = new Rating({
+      rideId, reviewerPhone, targetPhone, role, rating, womenSafetyRating, reviewText
+    });
+    
+    await newRating.save();
+    res.status(200).json({ message: "Rating submitted successfully!" });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to submit rating." });
   }
 });
 
