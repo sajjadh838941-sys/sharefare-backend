@@ -39,7 +39,16 @@ const userSchema = new mongoose.Schema({
       mileage: { type: String },
       rcImage: { type: String, default: "" }
     }
-  ]
+  ],
+
+  // ==========================================
+  // 🚨 NEW: HYBRID RATING SYSTEM (FAST READS)
+  // ==========================================
+  rating: { type: Number, default: 0 }, // Overall Average
+  totalRatings: { type: Number, default: 0 }, // Total people who rated
+  womenSafetyRating: { type: Number, default: 0 }, // Women's Safety Average
+  womenSafetyCount: { type: Number, default: 0 } // Total people who gave a safety rating
+
 }, { 
   timestamps: true 
 });
