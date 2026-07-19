@@ -34,11 +34,13 @@ const globalLimiter = rateLimit({
 });
 app.use(globalLimiter);
 
-// 1B. Input Sanitization: Strips out malicious MongoDB operators ($ and .)
-app.use(mongoSanitize());
-
+// MUST RUN FIRST: Parse incoming request bodies
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// MUST RUN SECOND: Sanitize the now-parsed body
+// 1B. Input Sanitization: Strips out malicious MongoDB operators ($ and .)
+app.use(mongoSanitize());
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
