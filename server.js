@@ -20,6 +20,9 @@ const User = require('./models/User');
 const Message = require('./models/Messages');
 
 const app = express();
+
+app.set('trust proxy', 1);
+
 app.use(cors());
 
 // ==========================================
