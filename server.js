@@ -39,8 +39,15 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // MUST RUN SECOND: Sanitize the now-parsed body
-// 1B. Input Sanitization: Strips out malicious MongoDB operators ($ and .)
-app.use(mongoSanitize());
+// 1B. Input Sanitization (With Socket.io Bypass)
+const sanitizeMiddleware = mongoSanitize();
+app.use((req, res, next) => {
+  // 🚨 Prevents the fatal crash by ignoring read-only Socket.io handshake queries
+  if (req.path.startsWith('/socket.io')) {
+    return next();
+  }
+  sanitizeMiddleware(req, res, next);
+});
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
