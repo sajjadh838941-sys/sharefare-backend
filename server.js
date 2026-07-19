@@ -8,9 +8,8 @@ const http = require('http');
 const { Server } = require('socket.io');
 const crypto = require('crypto'); 
 
-// 🚨 NEW: SECURITY IMPORTS
+// 🚨 NEW: SECURITY IMPORTS (Rate Limiter only, Sanitizer removed due to Socket.io conflict)
 const rateLimit = require('express-rate-limit');
-const mongoSanitize = require('express-mongo-sanitize');
 
 const { Expo } = require('expo-server-sdk');
 let expo = new Expo();
@@ -37,17 +36,6 @@ app.use(globalLimiter);
 // MUST RUN FIRST: Parse incoming request bodies
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
-// MUST RUN SECOND: Sanitize the now-parsed body
-// 1B. Input Sanitization (With Socket.io Bypass)
-const sanitizeMiddleware = mongoSanitize();
-app.use((req, res, next) => {
-  // 🚨 Prevents the fatal crash by ignoring read-only Socket.io handshake queries
-  if (req.path.startsWith('/socket.io')) {
-    return next();
-  }
-  sanitizeMiddleware(req, res, next);
-});
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
