@@ -288,15 +288,16 @@ app.post('/users/save-push-token', requireAuth, async (req, res) => {
 
 app.post('/users/verify-driver', requireAuth, async (req, res) => {
   try {
-    const { dlNumber, dlImageFront, dlImageBack, cars } = req.body; 
+    // 🚨 THE FIX: Replaced dlImageFront/dlImageBack with single dlImage
+    const { dlNumber, dlImage, cars } = req.body; 
     const phone = req.user.phone; 
 
     const user = await User.findOne({ phone });
     if (!user) return res.status(404).json({ error: "User not found." });
 
     user.drivingLicense = dlNumber; 
-    if (dlImageFront) user.dlImageFront = dlImageFront;
-    if (dlImageBack) user.dlImageBack = dlImageBack;
+    // 🚨 THE FIX: Update only the single dlImage in the database
+    if (dlImage) user.dlImage = dlImage;
 
     user.cars = cars; 
     user.isDriverVerified = true;
