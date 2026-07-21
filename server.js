@@ -521,6 +521,44 @@ app.post('/rides', requireAuth, async (req, res) => {
   }
 });
 
+
+app.post('/rides/start', requireAuth, async (req, res) => {
+  try {
+    const { rideId } = req.body;
+    const driverPhone = req.user.phone;
+
+    const ride = await Ride.findById(rideId);
+    if (!ride) return res.status(404).json({ error: "Ride not found." });
+    if (ride.driverPhone !== driverPhone) return res.status(403).json({ error: "Unauthorized." });
+
+    const driver = await User.findOne({ phone: driverPhone });
+    const driverName = driver?.name || "Your driver";
+
+    // Notify all accepted passengers
+    const uniquePassengers = [...new Set(ride.passengers)];
+    for (const passengerPhone of uniquePassengers) {
+      // Send real-time Socket alert
+      io.to(passengerPhone).emit('ride_started_alert', {
+        rideId,
+        driverName,
+        driverPhone
+      });
+
+      // Send Push Notification
+      sendPush(
+        passengerPhone,
+        "Ride Started!",
+        `${driverName} has started the journey. Please head to your pickup spot!`,
+        { rideId }
+      );
+    }
+
+    res.status(200).json({ success: true, message: "Passengers notified that ride has started!" });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to start ride." });
+  }
+});
+
 app.get('/rides/search', async (req, res) => {
   try {
     const { date, seats } = req.query; 
