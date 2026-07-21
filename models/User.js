@@ -27,9 +27,8 @@ const userSchema = new mongoose.Schema({
   isDriverVerified: { type: Boolean, default: false },   
   drivingLicense: { type: String, default: "" },
   
-  // DL Image Base64 Strings
-  dlImageFront: { type: String, default: "" },
-  dlImageBack: { type: String, default: "" },
+  // 🚨 THE FIX: Replaced Front & Back with a single unified image
+  dlImage: { type: String, default: "" },
   
   // THE NEW MULTI-CAR ARRAY
   cars: [
