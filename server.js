@@ -288,7 +288,6 @@ app.post('/users/save-push-token', requireAuth, async (req, res) => {
 
 app.post('/users/verify-driver', requireAuth, async (req, res) => {
   try {
-    // 🚨 THE FIX: Replaced dlImageFront/dlImageBack with single dlImage
     const { dlNumber, dlImage, cars } = req.body; 
     const phone = req.user.phone; 
 
@@ -296,13 +295,16 @@ app.post('/users/verify-driver', requireAuth, async (req, res) => {
     if (!user) return res.status(404).json({ error: "User not found." });
 
     user.drivingLicense = dlNumber; 
-    // 🚨 THE FIX: Update only the single dlImage in the database
     if (dlImage) user.dlImage = dlImage;
 
     user.cars = cars; 
     user.isDriverVerified = true;
 
     await user.save();
+    
+    // 🚨 ADDED: Push Notification for successful driver verification
+    sendPush(phone, "Verification Approved ✅", "You are now a verified driver! You can start publishing rides.");
+    
     res.status(200).json({ success: true, user, message: "Driver verified successfully!" });
   } catch (error) {
     res.status(500).json({ error: "Server error during verification." });
@@ -987,6 +989,40 @@ app.post('/ratings/submit', requireAuth, async (req, res) => {
     res.status(200).json({ message: "Rating submitted successfully!" });
   } catch (error) {
     res.status(500).json({ error: "Failed to submit rating." });
+  }
+});
+
+// ==========================================
+// 🚨 13. EMERGENCY / SOS ENDPOINT
+// ==========================================
+app.post('/sos/alert', requireAuth, async (req, res) => {
+  try {
+    const { locationUrl, currentAddress } = req.body;
+    const phone = req.user.phone;
+
+    const user = await User.findOne({ phone });
+    if (!user) return res.status(404).json({ error: "User not found." });
+
+    // 1. Email ShareFare Admins/Support about the emergency
+    if (process.env.RESEND_API_KEY) {
+      await resend.emails.send({
+        from: 'ShareFare Axom SOS <noreply@sharefareaxom.in>',
+        to: 'support@sharefareaxom.in', // Admin/Emergency Team Email
+        subject: `🚨 EMERGENCY SOS ALERT: ${user.name}`,
+        html: `<h2 style="color: red;">🚨 SOS ACTIVATED 🚨</h2>
+               <p><strong>User:</strong> ${user.name} (${phone})</p>
+               <p><strong>Emergency Contact 1:</strong> ${user.emgName1 || 'Not Provided'} (${user.emgPhone1 || 'N/A'})</p>
+               <p><strong>Emergency Contact 2:</strong> ${user.emgName2 || 'Not Provided'} (${user.emgPhone2 || 'N/A'})</p>
+               <p><strong>Live Location:</strong> <a href="${locationUrl}">${currentAddress || 'View on Map'}</a></p>`
+      });
+    }
+
+    // 2. Push Notification confirmation to the user
+    sendPush(phone, "SOS Activated 🚨", "Your emergency contacts and our support team have been alerted.");
+
+    res.status(200).json({ success: true, message: "SOS Alert dispatched securely." });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to dispatch SOS alert." });
   }
 });
 
