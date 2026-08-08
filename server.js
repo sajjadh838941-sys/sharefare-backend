@@ -533,6 +533,10 @@ app.post('/rides/start', requireAuth, async (req, res) => {
     if (!ride) return res.status(404).json({ error: "Ride not found." });
     if (ride.driverPhone !== driverPhone) return res.status(403).json({ error: "Unauthorized." });
 
+    // 🚨 BUG FIX: Actually update the database so the status persists!
+    ride.status = 'started';
+    await ride.save();
+
     const driver = await User.findOne({ phone: driverPhone });
     const driverName = driver?.name || "Your driver";
 
@@ -688,7 +692,8 @@ app.post('/rides/request-payment-confirmation', async (req, res) => {
 
 app.post('/rides/complete-passenger', async (req, res) => {
   try {
-    const { rideId, passengerPhone } = req.body;
+    // 🚨 BUG FIX: Added actualAmount to handle dynamic pricing accurately
+    const { rideId, passengerPhone, actualAmount } = req.body;
     const ride = await Ride.findById(rideId);
     if (!ride) return res.status(404).json({ error: "Ride not found" });
 
@@ -702,7 +707,8 @@ app.post('/rides/complete-passenger', async (req, res) => {
     if (allDone) { ride.status = 'completed'; }
     await ride.save();
 
-    const totalPaidByPassenger = ride.price; 
+    // 🚨 Use actualAmount if provided from the frontend, otherwise fallback to the base price
+    const totalPaidByPassenger = actualAmount || ride.price; 
     const platformFee = Math.round(totalPaidByPassenger * 0.15); 
     const driverEarnings = totalPaidByPassenger - platformFee;   
 
@@ -741,6 +747,11 @@ app.post('/rides/complete-passenger', async (req, res) => {
 io.on('connection', (socket) => {
   socket.on('join_private_room', (phone) => { socket.join(phone); });
   socket.on('send_private_message', (data) => { io.to(data.receiverId).emit('receive_message', data); });
+  
+  // 🚨 BUG FIX: Added relay logic so the passenger actually receives the "Picked Up" event!
+  socket.on('passenger_picked_up', (data) => {
+    io.to(data.passengerPhone).emit('passenger_picked_up', data);
+  });
 });
 
 app.post('/messages', requireAuth, async (req, res) => {
